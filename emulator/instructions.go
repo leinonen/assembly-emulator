@@ -1,0 +1,745 @@
+package emulator
+
+import (
+	"fmt"
+)
+
+// Opcode represents an instruction opcode
+type Opcode byte
+
+// Instruction opcodes (simplified encoding)
+const (
+	// Data movement
+	OpMOV  Opcode = 0x01
+	OpPUSH Opcode = 0x02
+	OpPOP  Opcode = 0x03
+	OpXCHG Opcode = 0x04
+
+	// Arithmetic
+	OpADD  Opcode = 0x10
+	OpSUB  Opcode = 0x11
+	OpMUL  Opcode = 0x12
+	OpDIV  Opcode = 0x13
+	OpIMUL Opcode = 0x14
+	OpIDIV Opcode = 0x15
+	OpINC  Opcode = 0x16
+	OpDEC  Opcode = 0x17
+	OpNEG  Opcode = 0x18
+
+	// Logical
+	OpAND Opcode = 0x20
+	OpOR  Opcode = 0x21
+	OpXOR Opcode = 0x22
+	OpNOT Opcode = 0x23
+	OpSHL Opcode = 0x24
+	OpSHR Opcode = 0x25
+	OpSAL Opcode = 0x26
+	OpSAR Opcode = 0x27
+	OpROL Opcode = 0x28
+	OpROR Opcode = 0x29
+
+	// Comparison
+	OpCMP  Opcode = 0x30
+	OpTEST Opcode = 0x31
+
+	// Control flow
+	OpJMP   Opcode = 0x40
+	OpJE    Opcode = 0x41 // JE/JZ
+	OpJNE   Opcode = 0x42 // JNE/JNZ
+	OpJG    Opcode = 0x43 // JG/JNLE
+	OpJGE   Opcode = 0x44 // JGE/JNL
+	OpJL    Opcode = 0x45 // JL/JNGE
+	OpJLE   Opcode = 0x46 // JLE/JNG
+	OpJA    Opcode = 0x47 // JA (unsigned >)
+	OpJAE   Opcode = 0x48 // JAE (unsigned >=)
+	OpJB    Opcode = 0x49 // JB (unsigned <)
+	OpJBE   Opcode = 0x4A // JBE (unsigned <=)
+	OpCALL  Opcode = 0x4B
+	OpRET   Opcode = 0x4C
+	OpLOOP  Opcode = 0x4D
+	OpLOOPZ Opcode = 0x4E
+	OpLOOPNZ Opcode = 0x4F
+
+	// Special
+	OpINT Opcode = 0x50
+	OpNOP Opcode = 0x51
+	OpHLT Opcode = 0x52
+)
+
+// Operand types
+type OperandType byte
+
+const (
+	OpTypeNone     OperandType = 0
+	OpTypeReg16    OperandType = 1 // 16-bit register
+	OpTypeReg8     OperandType = 2 // 8-bit register
+	OpTypeImm16    OperandType = 3 // 16-bit immediate
+	OpTypeImm8     OperandType = 4 // 8-bit immediate
+	OpTypeMem      OperandType = 5 // Memory address
+	OpTypeMemReg   OperandType = 6 // Memory [register]
+)
+
+// Instruction represents a decoded instruction
+type Instruction struct {
+	Opcode     Opcode
+	Dest       Operand
+	Src        Operand
+	Size       int // Instruction size in bytes
+}
+
+// Operand represents an instruction operand
+type Operand struct {
+	Type     OperandType
+	Reg16    *uint16  // Pointer to 16-bit register
+	Reg8Get  func() uint8
+	Reg8Set  func(uint8)
+	Imm16    uint16
+	Imm8     uint8
+	MemAddr  uint16
+}
+
+// Execute executes a single instruction
+func (c *CPU) Execute(inst Instruction) error {
+	switch inst.Opcode {
+	case OpMOV:
+		return c.execMOV(inst)
+	case OpPUSH:
+		return c.execPUSH(inst)
+	case OpPOP:
+		return c.execPOP(inst)
+	case OpXCHG:
+		return c.execXCHG(inst)
+
+	case OpADD:
+		return c.execADD(inst)
+	case OpSUB:
+		return c.execSUB(inst)
+	case OpMUL:
+		return c.execMUL(inst)
+	case OpDIV:
+		return c.execDIV(inst)
+	case OpINC:
+		return c.execINC(inst)
+	case OpDEC:
+		return c.execDEC(inst)
+	case OpNEG:
+		return c.execNEG(inst)
+
+	case OpAND:
+		return c.execAND(inst)
+	case OpOR:
+		return c.execOR(inst)
+	case OpXOR:
+		return c.execXOR(inst)
+	case OpNOT:
+		return c.execNOT(inst)
+	case OpSHL, OpSAL:
+		return c.execSHL(inst)
+	case OpSHR:
+		return c.execSHR(inst)
+	case OpSAR:
+		return c.execSAR(inst)
+
+	case OpCMP:
+		return c.execCMP(inst)
+	case OpTEST:
+		return c.execTEST(inst)
+
+	case OpJMP:
+		return c.execJMP(inst)
+	case OpJE:
+		return c.execJE(inst)
+	case OpJNE:
+		return c.execJNE(inst)
+	case OpJG:
+		return c.execJG(inst)
+	case OpJGE:
+		return c.execJGE(inst)
+	case OpJL:
+		return c.execJL(inst)
+	case OpJLE:
+		return c.execJLE(inst)
+	case OpJA:
+		return c.execJA(inst)
+	case OpJAE:
+		return c.execJAE(inst)
+	case OpJB:
+		return c.execJB(inst)
+	case OpJBE:
+		return c.execJBE(inst)
+	case OpCALL:
+		return c.execCALL(inst)
+	case OpRET:
+		return c.execRET(inst)
+	case OpLOOP:
+		return c.execLOOP(inst)
+	case OpLOOPZ:
+		return c.execLOOPZ(inst)
+	case OpLOOPNZ:
+		return c.execLOOPNZ(inst)
+
+	case OpINT:
+		return c.execINT(inst)
+	case OpNOP:
+		return nil
+	case OpHLT:
+		c.Halted = true
+		return nil
+
+	default:
+		return fmt.Errorf("unknown opcode: 0x%02X", inst.Opcode)
+	}
+}
+
+// MOV instruction
+func (c *CPU) execMOV(inst Instruction) error {
+	val := c.getOperandValue(inst.Src)
+
+	// If source is 8-bit and destination is memory, write byte not word
+	if (inst.Src.Type == OpTypeReg8 || inst.Src.Type == OpTypeImm8) &&
+		(inst.Dest.Type == OpTypeMem || inst.Dest.Type == OpTypeMemReg) {
+		c.Memory.WriteByte(inst.Dest.MemAddr, uint8(val&0xFF))
+		return nil
+	}
+
+	c.setOperandValue(inst.Dest, val)
+	return nil
+}
+
+// PUSH instruction
+func (c *CPU) execPUSH(inst Instruction) error {
+	val := c.getOperandValue(inst.Src)
+	return c.Push(val)
+}
+
+// POP instruction
+func (c *CPU) execPOP(inst Instruction) error {
+	val, err := c.Pop()
+	if err != nil {
+		return err
+	}
+	c.setOperandValue(inst.Dest, val)
+	return nil
+}
+
+// XCHG instruction
+func (c *CPU) execXCHG(inst Instruction) error {
+	val1 := c.getOperandValue(inst.Dest)
+	val2 := c.getOperandValue(inst.Src)
+	c.setOperandValue(inst.Dest, val2)
+	c.setOperandValue(inst.Src, val1)
+	return nil
+}
+
+// ADD instruction
+func (c *CPU) execADD(inst Instruction) error {
+	dest := c.getOperandValue(inst.Dest)
+	src := c.getOperandValue(inst.Src)
+	result := dest + src
+
+	// Set flags
+	c.Flags.CF = result < dest // Carry occurred
+	c.Flags.OF = ((dest^result)&(src^result)&0x8000) != 0 // Overflow
+	c.UpdateFlags(result)
+
+	c.setOperandValue(inst.Dest, result)
+	return nil
+}
+
+// SUB instruction
+func (c *CPU) execSUB(inst Instruction) error {
+	dest := c.getOperandValue(inst.Dest)
+	src := c.getOperandValue(inst.Src)
+	result := dest - src
+
+	// Set flags
+	c.Flags.CF = src > dest // Borrow occurred
+	c.Flags.OF = ((dest^src)&(dest^result)&0x8000) != 0 // Overflow
+	c.UpdateFlags(result)
+
+	c.setOperandValue(inst.Dest, result)
+	return nil
+}
+
+// MUL instruction (unsigned)
+func (c *CPU) execMUL(inst Instruction) error {
+	src := c.getOperandValue(inst.Dest)
+	result := uint32(c.AX) * uint32(src)
+
+	c.AX = uint16(result & 0xFFFF)
+	c.DX = uint16((result >> 16) & 0xFFFF)
+
+	// CF and OF set if upper half is non-zero
+	c.Flags.CF = c.DX != 0
+	c.Flags.OF = c.DX != 0
+
+	return nil
+}
+
+// DIV instruction (unsigned)
+func (c *CPU) execDIV(inst Instruction) error {
+	divisor := uint32(c.getOperandValue(inst.Dest))
+	if divisor == 0 {
+		return fmt.Errorf("division by zero")
+	}
+
+	dividend := (uint32(c.DX) << 16) | uint32(c.AX)
+	quotient := dividend / divisor
+	remainder := dividend % divisor
+
+	if quotient > 0xFFFF {
+		return fmt.Errorf("division overflow")
+	}
+
+	c.AX = uint16(quotient)
+	c.DX = uint16(remainder)
+
+	return nil
+}
+
+// INC instruction
+func (c *CPU) execINC(inst Instruction) error {
+	val := c.getOperandValue(inst.Dest)
+	result := val + 1
+
+	c.Flags.OF = (val == 0x7FFF) // Overflow from max positive
+	c.UpdateFlags(result)
+	// Note: INC does not affect CF
+
+	c.setOperandValue(inst.Dest, result)
+	return nil
+}
+
+// DEC instruction
+func (c *CPU) execDEC(inst Instruction) error {
+	val := c.getOperandValue(inst.Dest)
+	result := val - 1
+
+	c.Flags.OF = (val == 0x8000) // Overflow from min negative
+	c.UpdateFlags(result)
+	// Note: DEC does not affect CF
+
+	c.setOperandValue(inst.Dest, result)
+	return nil
+}
+
+// NEG instruction
+func (c *CPU) execNEG(inst Instruction) error {
+	val := c.getOperandValue(inst.Dest)
+	result := uint16(-int16(val))
+
+	c.Flags.CF = (val != 0)
+	c.Flags.OF = (val == 0x8000)
+	c.UpdateFlags(result)
+
+	c.setOperandValue(inst.Dest, result)
+	return nil
+}
+
+// AND instruction
+func (c *CPU) execAND(inst Instruction) error {
+	dest := c.getOperandValue(inst.Dest)
+	src := c.getOperandValue(inst.Src)
+	result := dest & src
+
+	c.Flags.CF = false
+	c.Flags.OF = false
+	c.UpdateFlags(result)
+
+	c.setOperandValue(inst.Dest, result)
+	return nil
+}
+
+// OR instruction
+func (c *CPU) execOR(inst Instruction) error {
+	dest := c.getOperandValue(inst.Dest)
+	src := c.getOperandValue(inst.Src)
+	result := dest | src
+
+	c.Flags.CF = false
+	c.Flags.OF = false
+	c.UpdateFlags(result)
+
+	c.setOperandValue(inst.Dest, result)
+	return nil
+}
+
+// XOR instruction
+func (c *CPU) execXOR(inst Instruction) error {
+	dest := c.getOperandValue(inst.Dest)
+	src := c.getOperandValue(inst.Src)
+	result := dest ^ src
+
+	c.Flags.CF = false
+	c.Flags.OF = false
+	c.UpdateFlags(result)
+
+	c.setOperandValue(inst.Dest, result)
+	return nil
+}
+
+// NOT instruction
+func (c *CPU) execNOT(inst Instruction) error {
+	val := c.getOperandValue(inst.Dest)
+	result := ^val
+	c.setOperandValue(inst.Dest, result)
+	return nil
+}
+
+// SHL instruction (shift left)
+func (c *CPU) execSHL(inst Instruction) error {
+	val := c.getOperandValue(inst.Dest)
+	count := c.getOperandValue(inst.Src)
+	if count > 16 {
+		count = 16
+	}
+
+	if count > 0 {
+		// Last bit shifted out goes to CF
+		c.Flags.CF = ((val >> (16 - count)) & 1) != 0
+		result := val << count
+		c.UpdateFlags(result)
+		c.setOperandValue(inst.Dest, result)
+	}
+
+	return nil
+}
+
+// SHR instruction (shift right logical)
+func (c *CPU) execSHR(inst Instruction) error {
+	val := c.getOperandValue(inst.Dest)
+	count := c.getOperandValue(inst.Src)
+	if count > 16 {
+		count = 16
+	}
+
+	if count > 0 {
+		// Last bit shifted out goes to CF
+		c.Flags.CF = ((val >> (count - 1)) & 1) != 0
+		result := val >> count
+		c.UpdateFlags(result)
+		c.setOperandValue(inst.Dest, result)
+	}
+
+	return nil
+}
+
+// SAR instruction (shift right arithmetic - preserves sign)
+func (c *CPU) execSAR(inst Instruction) error {
+	val := c.getOperandValue(inst.Dest)
+	count := c.getOperandValue(inst.Src)
+	if count > 16 {
+		count = 16
+	}
+
+	if count > 0 {
+		signed := int16(val)
+		c.Flags.CF = ((val >> (count - 1)) & 1) != 0
+		result := uint16(signed >> count)
+		c.UpdateFlags(result)
+		c.setOperandValue(inst.Dest, result)
+	}
+
+	return nil
+}
+
+// CMP instruction (compare - SUB without storing result)
+func (c *CPU) execCMP(inst Instruction) error {
+	dest := c.getOperandValue(inst.Dest)
+	src := c.getOperandValue(inst.Src)
+	result := dest - src
+
+	c.Flags.CF = src > dest
+	c.Flags.OF = ((dest^src)&(dest^result)&0x8000) != 0
+	c.UpdateFlags(result)
+
+	return nil
+}
+
+// TEST instruction (AND without storing result)
+func (c *CPU) execTEST(inst Instruction) error {
+	dest := c.getOperandValue(inst.Dest)
+	src := c.getOperandValue(inst.Src)
+	result := dest & src
+
+	c.Flags.CF = false
+	c.Flags.OF = false
+	c.UpdateFlags(result)
+
+	return nil
+}
+
+// JMP instruction
+func (c *CPU) execJMP(inst Instruction) error {
+	c.IP = c.getOperandValue(inst.Dest)
+	return nil
+}
+
+// JE/JZ instruction (jump if equal/zero)
+func (c *CPU) execJE(inst Instruction) error {
+	if c.Flags.ZF {
+		c.IP = c.getOperandValue(inst.Dest)
+	}
+	return nil
+}
+
+// JNE/JNZ instruction (jump if not equal/not zero)
+func (c *CPU) execJNE(inst Instruction) error {
+	if !c.Flags.ZF {
+		c.IP = c.getOperandValue(inst.Dest)
+	}
+	return nil
+}
+
+// JG/JNLE instruction (jump if greater - signed)
+func (c *CPU) execJG(inst Instruction) error {
+	if !c.Flags.ZF && (c.Flags.SF == c.Flags.OF) {
+		c.IP = c.getOperandValue(inst.Dest)
+	}
+	return nil
+}
+
+// JGE/JNL instruction (jump if greater or equal - signed)
+func (c *CPU) execJGE(inst Instruction) error {
+	if c.Flags.SF == c.Flags.OF {
+		c.IP = c.getOperandValue(inst.Dest)
+	}
+	return nil
+}
+
+// JL/JNGE instruction (jump if less - signed)
+func (c *CPU) execJL(inst Instruction) error {
+	if c.Flags.SF != c.Flags.OF {
+		c.IP = c.getOperandValue(inst.Dest)
+	}
+	return nil
+}
+
+// JLE/JNG instruction (jump if less or equal - signed)
+func (c *CPU) execJLE(inst Instruction) error {
+	if c.Flags.ZF || (c.Flags.SF != c.Flags.OF) {
+		c.IP = c.getOperandValue(inst.Dest)
+	}
+	return nil
+}
+
+// JA instruction (jump if above - unsigned)
+func (c *CPU) execJA(inst Instruction) error {
+	if !c.Flags.CF && !c.Flags.ZF {
+		c.IP = c.getOperandValue(inst.Dest)
+	}
+	return nil
+}
+
+// JAE instruction (jump if above or equal - unsigned)
+func (c *CPU) execJAE(inst Instruction) error {
+	if !c.Flags.CF {
+		c.IP = c.getOperandValue(inst.Dest)
+	}
+	return nil
+}
+
+// JB instruction (jump if below - unsigned)
+func (c *CPU) execJB(inst Instruction) error {
+	if c.Flags.CF {
+		c.IP = c.getOperandValue(inst.Dest)
+	}
+	return nil
+}
+
+// JBE instruction (jump if below or equal - unsigned)
+func (c *CPU) execJBE(inst Instruction) error {
+	if c.Flags.CF || c.Flags.ZF {
+		c.IP = c.getOperandValue(inst.Dest)
+	}
+	return nil
+}
+
+// CALL instruction
+func (c *CPU) execCALL(inst Instruction) error {
+	// Push return address (next instruction)
+	if err := c.Push(c.IP); err != nil {
+		return err
+	}
+	c.IP = c.getOperandValue(inst.Dest)
+	return nil
+}
+
+// RET instruction
+func (c *CPU) execRET(inst Instruction) error {
+	addr, err := c.Pop()
+	if err != nil {
+		return err
+	}
+	c.IP = addr
+	return nil
+}
+
+// LOOP instruction
+func (c *CPU) execLOOP(inst Instruction) error {
+	c.CX--
+	if c.CX != 0 {
+		c.IP = c.getOperandValue(inst.Dest)
+	}
+	return nil
+}
+
+// LOOPZ instruction (loop while zero)
+func (c *CPU) execLOOPZ(inst Instruction) error {
+	c.CX--
+	if c.CX != 0 && c.Flags.ZF {
+		c.IP = c.getOperandValue(inst.Dest)
+	}
+	return nil
+}
+
+// LOOPNZ instruction (loop while not zero)
+func (c *CPU) execLOOPNZ(inst Instruction) error {
+	c.CX--
+	if c.CX != 0 && !c.Flags.ZF {
+		c.IP = c.getOperandValue(inst.Dest)
+	}
+	return nil
+}
+
+// INT instruction (interrupt)
+func (c *CPU) execINT(inst Instruction) error {
+	intNum := uint8(c.getOperandValue(inst.Dest))
+
+	switch intNum {
+	case 0x10: // Video services
+		return c.handleInt10()
+	case 0x16: // Keyboard services
+		return c.handleInt16()
+	case 0x21: // DOS services
+		return c.handleInt21()
+	default:
+		// Ignore unknown interrupts for now
+		return nil
+	}
+}
+
+// INT 10h - Video services
+func (c *CPU) handleInt10() error {
+	ah := c.GetAH()
+
+	switch ah {
+	case 0x00: // Set video mode
+		al := c.GetAL()
+		if al == 0x13 {
+			// Mode 13h - 320x200 256-color graphics
+			// Notify that graphics mode has been activated
+			if c.Mode13hCallback != nil {
+				c.Mode13hCallback()
+			}
+		}
+		return nil
+
+	case 0x10: // Set palette register
+		al := c.GetAL()
+		if al == 0x00 {
+			// Set single palette register
+			// BL = color register to set
+			// BH = color value
+			if c.SetPaletteCallback != nil {
+				index := c.GetBL()
+				colorValue := c.GetBH()
+				// Convert 6-bit VGA color value to 8-bit RGB
+				// VGA uses 6 bits per channel (0-63), we scale to 0-255
+				r := byte((colorValue & 0x3F) * 4)
+				g := r // For now, use same value for simple greyscale
+				b := r
+				c.SetPaletteCallback(index, r, g, b)
+			}
+		} else if al == 0x10 {
+			// Set individual DAC register
+			// BX = register number
+			// DH = green, CH = blue, CL = red (each 0-63)
+			if c.SetPaletteCallback != nil {
+				index := byte(c.BX & 0xFF)
+				r := byte((c.CX & 0x3F) * 4)      // CL * 4
+				g := byte(((c.DX >> 8) & 0x3F) * 4) // DH * 4
+				b := byte(((c.CX >> 8) & 0x3F) * 4) // CH * 4
+				c.SetPaletteCallback(index, r, g, b)
+			}
+		}
+		return nil
+
+	default:
+		return nil
+	}
+}
+
+// INT 16h - Keyboard services
+func (c *CPU) handleInt16() error {
+	ah := c.GetAH()
+
+	switch ah {
+	case 0x00: // Read keystroke
+		// For now, return a random key or 0
+		// In real implementation, this would wait for keyboard input
+		c.SetAH(0) // Scan code
+		c.SetAL(0) // ASCII code
+		return nil
+	case 0x01: // Check for keystroke
+		// ZF = 1 if no key available
+		c.Flags.ZF = true
+		return nil
+	default:
+		return nil
+	}
+}
+
+// INT 21h - DOS services
+func (c *CPU) handleInt21() error {
+	ah := c.GetAH()
+
+	switch ah {
+	case 0x4C: // Exit program
+		c.Halted = true
+		return nil
+	default:
+		return nil
+	}
+}
+
+// Helper: Get operand value
+func (c *CPU) getOperandValue(op Operand) uint16 {
+	switch op.Type {
+	case OpTypeReg16:
+		if op.Reg16 != nil {
+			return *op.Reg16
+		}
+	case OpTypeReg8:
+		if op.Reg8Get != nil {
+			return uint16(op.Reg8Get())
+		}
+	case OpTypeImm16:
+		return op.Imm16
+	case OpTypeImm8:
+		return uint16(op.Imm8)
+	case OpTypeMem:
+		return c.Memory.ReadWord(op.MemAddr)
+	case OpTypeMemReg:
+		return c.Memory.ReadWord(op.MemAddr)
+	}
+	return 0
+}
+
+// Helper: Set operand value
+func (c *CPU) setOperandValue(op Operand, val uint16) {
+	switch op.Type {
+	case OpTypeReg16:
+		if op.Reg16 != nil {
+			*op.Reg16 = val
+		}
+	case OpTypeReg8:
+		if op.Reg8Set != nil {
+			op.Reg8Set(uint8(val & 0xFF))
+		}
+	case OpTypeMem:
+		c.Memory.WriteWord(op.MemAddr, val)
+	case OpTypeMemReg:
+		c.Memory.WriteWord(op.MemAddr, val)
+	}
+}

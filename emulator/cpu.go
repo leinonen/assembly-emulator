@@ -1,0 +1,213 @@
+package emulator
+
+import "fmt"
+
+// CPU represents the x86 CPU state
+type CPU struct {
+	// 16-bit general purpose registers
+	AX uint16 // Accumulator
+	BX uint16 // Base
+	CX uint16 // Counter
+	DX uint16 // Data
+
+	// Index and pointer registers
+	SI uint16 // Source Index
+	DI uint16 // Destination Index
+	BP uint16 // Base Pointer
+	SP uint16 // Stack Pointer
+
+	// Instruction pointer
+	IP uint16
+
+	// Flags register
+	Flags Flags
+
+	// Memory
+	Memory *Memory
+
+	// Halted state
+	Halted bool
+
+	// Mode 13h callback (called when graphics mode is activated)
+	Mode13hCallback func()
+
+	// Palette callback (called to set palette colors)
+	SetPaletteCallback func(index byte, r, g, b byte)
+}
+
+// Flags represents CPU flags
+type Flags struct {
+	CF bool // Carry Flag
+	ZF bool // Zero Flag
+	SF bool // Sign Flag
+	OF bool // Overflow Flag
+}
+
+// NewCPU creates a new CPU instance
+func NewCPU() *CPU {
+	return &CPU{
+		Memory: NewMemory(),
+		SP:     0xFFFE, // Stack grows downward from top of memory
+	}
+}
+
+// Reset resets the CPU to initial state
+func (c *CPU) Reset() {
+	c.AX = 0
+	c.BX = 0
+	c.CX = 0
+	c.DX = 0
+	c.SI = 0
+	c.DI = 0
+	c.BP = 0
+	c.SP = 0xFFFE
+	c.IP = 0
+	c.Flags = Flags{}
+	c.Halted = false
+	c.Memory.Clear()
+}
+
+// GetAL returns the low byte of AX
+func (c *CPU) GetAL() uint8 {
+	return uint8(c.AX & 0xFF)
+}
+
+// SetAL sets the low byte of AX
+func (c *CPU) SetAL(val uint8) {
+	c.AX = (c.AX & 0xFF00) | uint16(val)
+}
+
+// GetAH returns the high byte of AX
+func (c *CPU) GetAH() uint8 {
+	return uint8((c.AX >> 8) & 0xFF)
+}
+
+// SetAH sets the high byte of AX
+func (c *CPU) SetAH(val uint8) {
+	c.AX = (c.AX & 0x00FF) | (uint16(val) << 8)
+}
+
+// GetBL returns the low byte of BX
+func (c *CPU) GetBL() uint8 {
+	return uint8(c.BX & 0xFF)
+}
+
+// SetBL sets the low byte of BX
+func (c *CPU) SetBL(val uint8) {
+	c.BX = (c.BX & 0xFF00) | uint16(val)
+}
+
+// GetBH returns the high byte of BX
+func (c *CPU) GetBH() uint8 {
+	return uint8((c.BX >> 8) & 0xFF)
+}
+
+// SetBH sets the high byte of BX
+func (c *CPU) SetBH(val uint8) {
+	c.BX = (c.BX & 0x00FF) | (uint16(val) << 8)
+}
+
+// GetCL returns the low byte of CX
+func (c *CPU) GetCL() uint8 {
+	return uint8(c.CX & 0xFF)
+}
+
+// SetCL sets the low byte of CX
+func (c *CPU) SetCL(val uint8) {
+	c.CX = (c.CX & 0xFF00) | uint16(val)
+}
+
+// GetCH returns the high byte of CX
+func (c *CPU) GetCH() uint8 {
+	return uint8((c.CX >> 8) & 0xFF)
+}
+
+// SetCH sets the high byte of CX
+func (c *CPU) SetCH(val uint8) {
+	c.CX = (c.CX & 0x00FF) | (uint16(val) << 8)
+}
+
+// GetDL returns the low byte of DX
+func (c *CPU) GetDL() uint8 {
+	return uint8(c.DX & 0xFF)
+}
+
+// SetDL sets the low byte of DX
+func (c *CPU) SetDL(val uint8) {
+	c.DX = (c.DX & 0xFF00) | uint16(val)
+}
+
+// GetDH returns the high byte of DX
+func (c *CPU) GetDH() uint8 {
+	return uint8((c.DX >> 8) & 0xFF)
+}
+
+// SetDH sets the high byte of DX
+func (c *CPU) SetDH(val uint8) {
+	c.DX = (c.DX & 0x00FF) | (uint16(val) << 8)
+}
+
+// Push pushes a 16-bit value onto the stack
+func (c *CPU) Push(val uint16) error {
+	if c.SP < 2 {
+		return fmt.Errorf("stack overflow")
+	}
+	c.SP -= 2
+	c.Memory.WriteWord(c.SP, val)
+	return nil
+}
+
+// Pop pops a 16-bit value from the stack
+func (c *CPU) Pop() (uint16, error) {
+	if c.SP > 0xFFFC {
+		return 0, fmt.Errorf("stack underflow")
+	}
+	val := c.Memory.ReadWord(c.SP)
+	c.SP += 2
+	return val, nil
+}
+
+// UpdateZeroFlag sets the zero flag based on the value
+func (c *CPU) UpdateZeroFlag(val uint16) {
+	c.Flags.ZF = (val == 0)
+}
+
+// UpdateSignFlag sets the sign flag based on the value (16-bit)
+func (c *CPU) UpdateSignFlag(val uint16) {
+	c.Flags.SF = (val&0x8000) != 0
+}
+
+// UpdateSignFlag8 sets the sign flag based on the value (8-bit)
+func (c *CPU) UpdateSignFlag8(val uint8) {
+	c.Flags.SF = (val&0x80) != 0
+}
+
+// UpdateFlags updates zero and sign flags based on the result
+func (c *CPU) UpdateFlags(val uint16) {
+	c.UpdateZeroFlag(val)
+	c.UpdateSignFlag(val)
+}
+
+// UpdateFlags8 updates zero and sign flags based on 8-bit result
+func (c *CPU) UpdateFlags8(val uint8) {
+	c.Flags.ZF = (val == 0)
+	c.UpdateSignFlag8(val)
+}
+
+// String returns a string representation of CPU state
+func (c *CPU) String() string {
+	return fmt.Sprintf("AX:%04X BX:%04X CX:%04X DX:%04X SI:%04X DI:%04X BP:%04X SP:%04X IP:%04X [%s%s%s%s]",
+		c.AX, c.BX, c.CX, c.DX, c.SI, c.DI, c.BP, c.SP, c.IP,
+		flagStr("C", c.Flags.CF),
+		flagStr("Z", c.Flags.ZF),
+		flagStr("S", c.Flags.SF),
+		flagStr("O", c.Flags.OF),
+	)
+}
+
+func flagStr(name string, set bool) string {
+	if set {
+		return name
+	}
+	return "-"
+}
