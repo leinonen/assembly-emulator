@@ -341,7 +341,15 @@ func (c *CPU) execINC(inst Instruction) error {
 	val := c.getOperandValue(inst.Dest)
 	result := val + 1
 
-	c.Flags.OF = (val == 0x7FFF) // Overflow from max positive
+	// Handle 8-bit vs 16-bit operations correctly
+	if inst.Dest.Type == OpTypeReg8 {
+		// For 8-bit operations, mask to 8 bits before updating flags
+		result = result & 0xFF
+		c.Flags.OF = (val == 0x7F) // Overflow from max positive (8-bit)
+	} else {
+		c.Flags.OF = (val == 0x7FFF) // Overflow from max positive (16-bit)
+	}
+
 	c.UpdateFlags(result)
 	// Note: INC does not affect CF
 
@@ -354,7 +362,15 @@ func (c *CPU) execDEC(inst Instruction) error {
 	val := c.getOperandValue(inst.Dest)
 	result := val - 1
 
-	c.Flags.OF = (val == 0x8000) // Overflow from min negative
+	// Handle 8-bit vs 16-bit operations correctly
+	if inst.Dest.Type == OpTypeReg8 {
+		// For 8-bit operations, mask to 8 bits before updating flags
+		result = result & 0xFF
+		c.Flags.OF = (val == 0x80) // Overflow from min negative (8-bit)
+	} else {
+		c.Flags.OF = (val == 0x8000) // Overflow from min negative (16-bit)
+	}
+
 	c.UpdateFlags(result)
 	// Note: DEC does not affect CF
 

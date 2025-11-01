@@ -6,54 +6,39 @@
     MOV AX, 13h
     INT 10h
 
+    ; Set DS to VGA segment
+    MOV AX, 0xA000
+    MOV DS, AX
+
     ; Draw 16 vertical bars (20 pixels wide each = 320 total)
-    MOV DI, 0          ; Column counter
-    MOV SI, 0          ; Start offset
-
-column_loop:
-    ; Fill 20 pixels with current color
-    MOV CX, 20         ; 20 pixels wide
-
-pixel_column:
-    ; Calculate address for each row (200 rows)
-    MOV BX, 0          ; Row counter
+    XOR DI, DI         ; Row counter (0-199)
 
 row_loop:
-    ; Calculate offset = row*320 + column
-    MOV AX, BX
-    MOV DX, 320
-    MUL DX             ; AX = row * 320
-    ADD AX, SI         ; AX = offset (0-63999)
+    ; Calculate row start offset: row * 320
+    MOV AX, DI
+    MOV BX, 320
+    MUL BX             ; AX = row * 320
+    MOV SI, AX         ; SI = row start offset
 
-    ; Map offset to VGA memory address
-    CMP AX, 0x6000     ; 24576 in hex
-    JB use_high_region  ; Use JB (unsigned) instead of JL (signed)
+    ; For each row, draw 16 bars of 20 pixels each
+    MOV DL, 0          ; Color counter (0-15) - use DL instead of BL
 
-    ; Wrapped region: 0x0400 + (offset - 24576)
-    SUB AX, 0x6000     ; 24576 in hex
-    ADD AX, 0x0400
-    JMP write_pixel
+bar_loop:
+    ; Draw 20 pixels of current color (in DL)
+    MOV CX, 20
+    pixel_loop:
+        MOV BX, SI      ; BX = offset
+        MOV AL, DL      ; AL = color
+        MOV [BX], AL    ; Write pixel
+        INC SI          ; Next pixel
+        LOOP pixel_loop
 
-use_high_region:
-    ; High region: 0xA000 + offset
-    ADD AX, 0xA000
+    INC DL             ; Next color
+    CMP DL, 16
+    JB bar_loop
 
-write_pixel:
-    ; Write color (DI contains color index 0-15)
-    MOV DX, DI
-    MOV [AX], DL       ; Write byte
-
-    INC BX
-    CMP BX, 200
-    JB row_loop         ; Use JB for unsigned comparison
-
-    INC SI             ; Next column
-    DEC CX
-    JNZ pixel_column   ; Use JNZ instead of CMP+JNE
-
-    ; Next color bar
     INC DI
-    CMP DI, 16
-    JB column_loop       ; Use JB for unsigned comparison
+    CMP DI, 200
+    JB row_loop
 
     HLT

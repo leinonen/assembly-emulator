@@ -6,32 +6,29 @@
     MOV AX, 13h
     INT 10h
 
-    ; Write red pixel at (10, 10)
-    ; VGA address = 0xA000 + (y * 320 + x)
-    ; = 0xA000 + (10 * 320 + 10)
-    ; = 0xA000 + 3210
-    ; = 0xA000 + 0x0C8A
+    ; Set DS to VGA segment
     MOV AX, 0A000h
-    ADD AX, 3210
-    MOV BX, 4          ; Red color (index 4)
-    MOV [AX], BX
+    MOV DS, AX
+
+    ; Write red pixel at (10, 10)
+    ; VGA offset = y * 320 + x = 10 * 320 + 10 = 3210
+    MOV BX, 3210
+    MOV AL, 4          ; Red color (index 4)
+    MOV [BX], AL
 
     ; Write blue pixel at (20, 10)
-    MOV AX, 0A000h
-    ADD AX, 3220
-    MOV BX, 1          ; Blue color (index 1)
-    MOV [AX], BX
+    MOV BX, 3220
+    MOV AL, 1          ; Blue color (index 1)
+    MOV [BX], AL
 
     ; Write green pixel at (30, 10)
-    MOV AX, 0A000h
-    ADD AX, 3230
-    MOV BX, 2          ; Green color (index 2)
-    MOV [AX], BX
+    MOV BX, 3230
+    MOV AL, 2          ; Green color (index 2)
+    MOV [BX], AL
 
     ; Write white pixel at (40, 10)
-    MOV AX, 0A000h
-    ADD AX, 3240
-    MOV BX, 15         ; White color (index 15)
-    MOV [AX], BX
+    MOV BX, 3240
+    MOV AL, 15         ; White color (index 15)
+    MOV [BX], AL
 
     HLT
