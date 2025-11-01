@@ -53,21 +53,34 @@ func main() {
 	var graphicsStarted bool
 	var graphicsMutex sync.Mutex
 	graphicsDone := make(chan struct{})
+	var vgaDisplay *graphics.VGADisplay
 
 	cpu.Mode13hCallback = func() {
 		graphicsMutex.Lock()
+		defer graphicsMutex.Unlock()
 		if !graphicsStarted {
 			graphicsStarted = true
-			graphicsMutex.Unlock()
 			fmt.Println("Mode 13h detected - initializing graphics...")
+
+			// Create VGA display immediately (before releasing mutex)
+			vgaDisplay = graphics.NewVGADisplay(cpu.Memory)
+
+			// Run graphics in goroutine
 			go func() {
-				if err := graphics.RunGraphics(cpu.Memory); err != nil {
+				if err := graphics.RunGraphicsWithDisplay(vgaDisplay); err != nil {
 					fmt.Fprintf(os.Stderr, "Graphics error: %v\n", err)
 				}
 				close(graphicsDone)
 			}()
-		} else {
-			graphicsMutex.Unlock()
+		}
+	}
+
+	// Setup palette manipulation callback
+	cpu.SetPaletteCallback = func(index byte, r, g, b byte) {
+		graphicsMutex.Lock()
+		defer graphicsMutex.Unlock()
+		if vgaDisplay != nil {
+			vgaDisplay.SetPaletteColor(index, r, g, b)
 		}
 	}
 

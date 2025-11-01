@@ -371,6 +371,7 @@ func isInstruction(name string) bool {
 		"CALL", "RET",
 		"LOOP", "LOOPE", "LOOPZ", "LOOPNE", "LOOPNZ",
 		"INT", "NOP", "HLT",
+		"IN", "OUT", // I/O instructions
 		"DB", "DW", "DD", // Data directives
 		"BYTE", "WORD", "DWORD",
 	}

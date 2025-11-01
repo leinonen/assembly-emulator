@@ -33,6 +33,13 @@ type CPU struct {
 
 	// Palette callback (called to set palette colors)
 	SetPaletteCallback func(index byte, r, g, b byte)
+
+	// VGA DAC state (for palette manipulation)
+	vgaDACWriteIndex uint8 // Port 0x3C8 - DAC write index
+	vgaDACReadIndex  uint8 // Port 0x3C7 - DAC read index
+	vgaDACState      uint8 // 0=R, 1=G, 2=B (which component we're writing)
+	vgaDACColorR     uint8 // Temporary storage for R component
+	vgaDACColorG     uint8 // Temporary storage for G component
 }
 
 // Flags represents CPU flags
@@ -210,4 +217,56 @@ func flagStr(name string, set bool) string {
 		return name
 	}
 	return "-"
+}
+
+// OutByte handles OUT instruction - write byte to I/O port
+func (c *CPU) OutByte(port uint16, value uint8) {
+	switch port {
+	case 0x3C8: // DAC Write Index
+		c.vgaDACWriteIndex = value
+		c.vgaDACState = 0 // Reset to R component
+	case 0x3C9: // DAC Data
+		switch c.vgaDACState {
+		case 0: // Red component
+			c.vgaDACColorR = value
+			c.vgaDACState = 1
+		case 1: // Green component
+			c.vgaDACColorG = value
+			c.vgaDACState = 2
+		case 2: // Blue component
+			// We have all three components, update the palette
+			// Convert from 6-bit (0-63) to 8-bit (0-255)
+			// Use uint16 to avoid overflow, then convert back to uint8
+			r := uint8((uint16(c.vgaDACColorR&0x3F) * 255) / 63)
+			g := uint8((uint16(c.vgaDACColorG&0x3F) * 255) / 63)
+			b := uint8((uint16(value&0x3F) * 255) / 63)
+
+			if c.SetPaletteCallback != nil {
+				c.SetPaletteCallback(c.vgaDACWriteIndex, r, g, b)
+			}
+
+			// Move to next color index and reset to R component
+			c.vgaDACWriteIndex++
+			c.vgaDACState = 0
+		}
+	case 0x3C7: // DAC Read Index
+		c.vgaDACReadIndex = value
+		c.vgaDACState = 0
+	}
+}
+
+// InByte handles IN instruction - read byte from I/O port
+func (c *CPU) InByte(port uint16) uint8 {
+	switch port {
+	case 0x3C7: // DAC State
+		// Return 0 to indicate DAC is ready
+		return 0
+	case 0x3C8: // DAC Write Index
+		return c.vgaDACWriteIndex
+	case 0x3C9: // DAC Data (read)
+		// For now, return 0 (proper implementation would read from palette)
+		return 0
+	default:
+		return 0
+	}
 }

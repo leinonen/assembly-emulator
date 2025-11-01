@@ -489,6 +489,9 @@ func (p *Parser) generateInstruction(instr string, operands []Operand) error {
 		"INT": emulator.OpINT,
 		"NOP": emulator.OpNOP,
 		"HLT": emulator.OpHLT,
+
+		"IN":  emulator.OpIN,
+		"OUT": emulator.OpOUT,
 	}
 
 	opcode, ok = opcodeMap[instr]

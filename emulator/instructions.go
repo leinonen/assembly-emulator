@@ -64,6 +64,10 @@ const (
 	OpINT Opcode = 0x50
 	OpNOP Opcode = 0x51
 	OpHLT Opcode = 0x52
+
+	// I/O
+	OpIN  Opcode = 0x60
+	OpOUT Opcode = 0x61
 )
 
 // Operand types
@@ -185,6 +189,11 @@ func (c *CPU) Execute(inst Instruction) error {
 	case OpHLT:
 		c.Halted = true
 		return nil
+
+	case OpOUT:
+		return c.execOUT(inst)
+	case OpIN:
+		return c.execIN(inst)
 
 	default:
 		return fmt.Errorf("unknown opcode: 0x%02X", inst.Opcode)
@@ -742,4 +751,67 @@ func (c *CPU) setOperandValue(op Operand, val uint16) {
 	case OpTypeMemReg:
 		c.Memory.WriteWord(op.MemAddr, val)
 	}
+}
+
+// OUT instruction - write to I/O port
+// OUT port, value
+// Typically: OUT DX, AL (port in DX, value in AL)
+func (c *CPU) execOUT(inst Instruction) error {
+	// Get port number (typically from DX register or immediate)
+	port := uint16(0)
+	if inst.Dest.Type == OpTypeReg16 && inst.Dest.Reg16 == &c.DX {
+		port = c.DX
+	} else if inst.Dest.Type == OpTypeImm16 {
+		port = inst.Dest.Imm16
+	} else if inst.Dest.Type == OpTypeImm8 {
+		port = uint16(inst.Dest.Imm8)
+	} else {
+		return fmt.Errorf("OUT: invalid port operand")
+	}
+
+	// Get value (typically from AL register)
+	value := uint8(0)
+	if inst.Src.Type == OpTypeReg8 {
+		if inst.Src.Reg8Get != nil {
+			value = inst.Src.Reg8Get()
+		}
+	} else if inst.Src.Type == OpTypeImm8 {
+		value = inst.Src.Imm8
+	} else {
+		return fmt.Errorf("OUT: invalid value operand")
+	}
+
+	c.OutByte(port, value)
+	return nil
+}
+
+// IN instruction - read from I/O port
+// IN value, port
+// Typically: IN AL, DX (port in DX, result to AL)
+func (c *CPU) execIN(inst Instruction) error {
+	// Get port number (typically from DX register or immediate)
+	port := uint16(0)
+	if inst.Src.Type == OpTypeReg16 && inst.Src.Reg16 == &c.DX {
+		port = c.DX
+	} else if inst.Src.Type == OpTypeImm16 {
+		port = inst.Src.Imm16
+	} else if inst.Src.Type == OpTypeImm8 {
+		port = uint16(inst.Src.Imm8)
+	} else {
+		return fmt.Errorf("IN: invalid port operand")
+	}
+
+	// Read value from port
+	value := c.InByte(port)
+
+	// Store in destination (typically AL register)
+	if inst.Dest.Type == OpTypeReg8 {
+		if inst.Dest.Reg8Set != nil {
+			inst.Dest.Reg8Set(value)
+		}
+	} else {
+		return fmt.Errorf("IN: invalid destination operand")
+	}
+
+	return nil
 }

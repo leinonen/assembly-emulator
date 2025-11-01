@@ -6,9 +6,40 @@
     MOV AX, 13h
     INT 10h
 
+    ; Set up 256-level greyscale palette
+    MOV DX, 0x03C8      ; DAC Write Index
+    XOR AL, AL          ; Start at palette index 0
+    OUT DX, AL
+
+    MOV DX, 0x03C9      ; DAC Data port
+    XOR BX, BX          ; BX = color counter (0-255)
+
+greyscale_palette:
+    ; Calculate grey value with better scaling
+    ; Map 0-255 to 0-63 using: (BX * 63) / 255
+    ; Approximation: BX / 4 is too dark, so use (BX >> 2) + (BX >> 4)
+    ; Or simpler: just use BX >> 2 but add some brightness
+    MOV AX, BX
+    SHR AX, 1
+    SHR AX, 1           ; AX = BX / 4
+
+    ; Add extra brightness for better contrast
+    ADD AL, 16          ; Shift range up
+    CMP AL, 63
+    JBE grey_ok
+    MOV AL, 63          ; Cap at max
+grey_ok:
+    OUT DX, AL          ; Red = grey
+    OUT DX, AL          ; Green = grey
+    OUT DX, AL          ; Blue = grey
+
+    INC BX
+    CMP BX, 256
+    JNE greyscale_palette
+
     ; Fill entire screen with random noise
     ; Use simple LCG: next = (current * 29 + 17) & 0xFF
-    ; Map result to greyscale colors (7-15 for varying grays)
+    ; Map result to greyscale colors (0-255)
 
     MOV BX, 137         ; Random seed
     MOV CX, 200         ; 200 rows
@@ -24,16 +55,16 @@ pixel_loop:
     XOR AX, SI          ; XOR with position for variation
     ADD BX, 127         ; Add to seed for next iteration
 
-    ; Mask to 0-15 range for both bytes
-    AND AX, 3855        ; 0x0F0F mask
+    ; Use full 0-255 range for both bytes (no masking)
+    ; AX contains two random bytes (AL and AH)
 
     ; Calculate VGA address and write
-    MOV DI, AX          ; Save pixel data
+    MOV DI, AX          ; Save pixel data (both bytes)
     MOV AX, 0xA000
     ADD AX, SI
-    MOV [AX], DI        ; Write to VGA
+    MOV [AX], DI        ; Write word to VGA (2 pixels)
 
-    ; Next word
+    ; Next word (2 pixels)
     INC SI
     INC SI
 

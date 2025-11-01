@@ -28,14 +28,17 @@ func NewVGADisplay(memory *emulator.Memory) *VGADisplay {
 		pixels: make([]byte, ScreenWidth*ScreenHeight*4), // RGBA
 	}
 
-	vga.initializePalette()
+	// Initialize with standard VGA default palette
+	// Programs can override this via OUT instructions to ports 0x3C8/0x3C9
+	vga.initializeDefaultPalette()
 	return vga
 }
 
-// initializePalette sets up the standard VGA 256-color palette
-func (v *VGADisplay) initializePalette() {
-	// Standard VGA palette (simplified)
-	// Colors 0-15: Standard 16 colors
+// initializeDefaultPalette sets up the standard VGA default palette
+// This matches the default VGA Mode 13h palette that programs expect
+func (v *VGADisplay) initializeDefaultPalette() {
+	// Standard VGA 16-color palette (EGA compatible)
+	// These are the default colors 0-15
 	v.palette[0] = color.RGBA{0, 0, 0, 255}       // Black
 	v.palette[1] = color.RGBA{0, 0, 170, 255}     // Blue
 	v.palette[2] = color.RGBA{0, 170, 0, 255}     // Green
@@ -53,7 +56,7 @@ func (v *VGADisplay) initializePalette() {
 	v.palette[14] = color.RGBA{255, 255, 85, 255} // Yellow
 	v.palette[15] = color.RGBA{255, 255, 255, 255} // White
 
-	// Colors 16-231: 216-color cube (6x6x6)
+	// Colors 16-231: 216-color cube (6x6x6) - standard VGA default
 	idx := 16
 	for r := 0; r < 6; r++ {
 		for g := 0; g < 6; g++ {
@@ -69,7 +72,7 @@ func (v *VGADisplay) initializePalette() {
 		}
 	}
 
-	// Colors 232-255: Grayscale
+	// Colors 232-255: Grayscale ramp
 	for i := 0; i < 24; i++ {
 		gray := uint8(8 + i*10)
 		v.palette[232+i] = color.RGBA{gray, gray, gray, 255}
@@ -148,5 +151,15 @@ func RunGraphics(memory *emulator.Memory) error {
 	ebiten.SetWindowResizingMode(ebiten.WindowResizingModeEnabled)
 
 	game := NewGame(memory)
+	return ebiten.RunGame(game)
+}
+
+// RunGraphicsWithDisplay starts the graphics window with a specific VGA display
+func RunGraphicsWithDisplay(display *VGADisplay) error {
+	ebiten.SetWindowSize(ScreenWidth*Scale, ScreenHeight*Scale)
+	ebiten.SetWindowTitle("Assembly Emulator - VGA Mode 13h")
+	ebiten.SetWindowResizingMode(ebiten.WindowResizingModeEnabled)
+
+	game := &Game{display: display}
 	return ebiten.RunGame(game)
 }

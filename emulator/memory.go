@@ -75,8 +75,6 @@ func (m *Memory) WriteByte(addr uint16, val uint8) {
 			m.VGA[offset] = val
 			return
 		}
-		// DEBUG: If we get here, offset was out of range
-		// This should never happen for valid VGA writes
 	}
 
 	// Protect low memory from accidental writes

@@ -208,6 +208,8 @@ func getOperandCount(opcode Opcode) int {
 		return 1
 	case OpRET, OpNOP, OpHLT:
 		return 0
+	case OpOUT, OpIN:
+		return 2
 	default:
 		return 0
 	}
