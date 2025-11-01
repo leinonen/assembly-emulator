@@ -65,9 +65,14 @@ func main() {
 			// Create VGA display immediately (before releasing mutex)
 			vgaDisplay = graphics.NewVGADisplay(cpu.Memory)
 
+			// Create keyboard callback
+			keyCallback := func(scancode, ascii uint8) {
+				cpu.SetKeyPress(scancode, ascii)
+			}
+
 			// Run graphics in goroutine
 			go func() {
-				if err := graphics.RunGraphicsWithDisplay(vgaDisplay); err != nil {
+				if err := graphics.RunGraphicsWithDisplay(vgaDisplay, keyCallback); err != nil {
 					fmt.Fprintf(os.Stderr, "Graphics error: %v\n", err)
 				}
 				close(graphicsDone)

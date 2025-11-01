@@ -40,6 +40,11 @@ type CPU struct {
 	vgaDACState      uint8 // 0=R, 1=G, 2=B (which component we're writing)
 	vgaDACColorR     uint8 // Temporary storage for R component
 	vgaDACColorG     uint8 // Temporary storage for G component
+
+	// Keyboard state (for BIOS INT 16h)
+	keyboardScancode uint8 // Last key scancode
+	keyboardASCII    uint8 // Last key ASCII code
+	keyAvailable     bool  // True if a key is waiting to be read
 }
 
 // Flags represents CPU flags
@@ -269,4 +274,12 @@ func (c *CPU) InByte(port uint16) uint8 {
 	default:
 		return 0
 	}
+}
+
+// SetKeyPress sets the keyboard state when a key is pressed
+// scancode is the BIOS scan code, ascii is the ASCII character
+func (c *CPU) SetKeyPress(scancode, ascii uint8) {
+	c.keyboardScancode = scancode
+	c.keyboardASCII = ascii
+	c.keyAvailable = true
 }

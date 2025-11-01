@@ -37,11 +37,16 @@ grey_ok:
     CMP BX, 256
     JNE greyscale_palette
 
+    ; Initialize random seed once before main loop
+    MOV BX, 137         ; Initial random seed
+
+    ; Main loop - continuously generate noise until ESC is pressed
+main_loop:
     ; Fill entire screen with random noise
     ; Use simple LCG: next = (current * 29 + 17) & 0xFF
     ; Map result to greyscale colors (0-255)
+    ; BX carries the seed from previous frame for variety
 
-    MOV BX, 137         ; Random seed
     MOV CX, 200         ; 200 rows
     XOR SI, SI          ; Start at offset 0
 
@@ -78,4 +83,16 @@ pixel_loop:
     CMP CX, 0
     JNE row_loop
 
+    ; Screen filled - now check for ESC key
+    MOV AH, 0x01        ; INT 16h function 01h - check for keystroke
+    INT 0x16
+    JZ main_loop        ; ZF=1 means no key, continue looping
+
+    ; Key is available - read it
+    MOV AH, 0x00        ; INT 16h function 00h - read keystroke
+    INT 0x16
+    CMP AL, 0x1B        ; Is it ESC? (ASCII 27 = 0x1B)
+    JNE main_loop       ; Not ESC, continue
+
+    ; ESC pressed - exit
     HLT

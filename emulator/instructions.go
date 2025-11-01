@@ -684,16 +684,32 @@ func (c *CPU) handleInt16() error {
 	ah := c.GetAH()
 
 	switch ah {
-	case 0x00: // Read keystroke
-		// For now, return a random key or 0
-		// In real implementation, this would wait for keyboard input
-		c.SetAH(0) // Scan code
-		c.SetAL(0) // ASCII code
+	case 0x00: // Read keystroke (wait for key and return it)
+		// Return the key if available, otherwise return 0 (non-blocking in emulator)
+		if c.keyAvailable {
+			c.SetAH(c.keyboardScancode) // Scan code in AH
+			c.SetAL(c.keyboardASCII)    // ASCII code in AL
+			// Consume the key
+			c.keyAvailable = false
+		} else {
+			// No key available - return 0
+			c.SetAH(0)
+			c.SetAL(0)
+		}
 		return nil
-	case 0x01: // Check for keystroke
-		// ZF = 1 if no key available
-		c.Flags.ZF = true
+
+	case 0x01: // Check for keystroke (non-destructive)
+		// ZF = 0 if key available, ZF = 1 if no key
+		if c.keyAvailable {
+			c.Flags.ZF = false
+			// Also set AX to the key that would be read (but don't consume it)
+			c.SetAH(c.keyboardScancode)
+			c.SetAL(c.keyboardASCII)
+		} else {
+			c.Flags.ZF = true
+		}
 		return nil
+
 	default:
 		return nil
 	}

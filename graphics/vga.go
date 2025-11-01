@@ -115,7 +115,8 @@ func (v *VGADisplay) Layout(outsideWidth, outsideHeight int) (int, int) {
 
 // Game wraps VGADisplay to implement ebiten.Game interface
 type Game struct {
-	display *VGADisplay
+	display          *VGADisplay
+	keyPressCallback func(scancode, ascii uint8) // Callback to notify CPU of key press
 }
 
 // NewGame creates a new game instance
@@ -129,8 +130,44 @@ func NewGame(memory *emulator.Memory) *Game {
 func (g *Game) Update() error {
 	// Check for ESC key to close window
 	if inpututil.IsKeyJustPressed(ebiten.KeyEscape) {
+		// Notify CPU about ESC key press
+		if g.keyPressCallback != nil {
+			g.keyPressCallback(0x01, 0x1B) // Scancode 0x01, ASCII 0x1B (ESC)
+		}
 		return ebiten.Termination
 	}
+
+	// Check for other keys and notify CPU
+	if g.keyPressCallback != nil {
+		// Map common keys to BIOS scancodes
+		keyMap := map[ebiten.Key]struct {
+			scancode uint8
+			ascii    uint8
+		}{
+			ebiten.KeyEnter:     {0x1C, 0x0D}, // Enter
+			ebiten.KeySpace:     {0x39, 0x20}, // Space
+			ebiten.KeyBackspace: {0x0E, 0x08}, // Backspace
+			// Add more keys as needed
+		}
+
+		for key, codes := range keyMap {
+			if inpututil.IsKeyJustPressed(key) {
+				g.keyPressCallback(codes.scancode, codes.ascii)
+				break
+			}
+		}
+
+		// Handle letter keys A-Z
+		for k := ebiten.KeyA; k <= ebiten.KeyZ; k++ {
+			if inpututil.IsKeyJustPressed(k) {
+				ascii := uint8('a' + int(k-ebiten.KeyA))
+				scancode := uint8(0x1E + int(k-ebiten.KeyA)) // BIOS scancodes for A-Z
+				g.keyPressCallback(scancode, ascii)
+				break
+			}
+		}
+	}
+
 	return g.display.Update()
 }
 
@@ -155,11 +192,14 @@ func RunGraphics(memory *emulator.Memory) error {
 }
 
 // RunGraphicsWithDisplay starts the graphics window with a specific VGA display
-func RunGraphicsWithDisplay(display *VGADisplay) error {
+func RunGraphicsWithDisplay(display *VGADisplay, keyCallback func(scancode, ascii uint8)) error {
 	ebiten.SetWindowSize(ScreenWidth*Scale, ScreenHeight*Scale)
 	ebiten.SetWindowTitle("Assembly Emulator - VGA Mode 13h")
 	ebiten.SetWindowResizingMode(ebiten.WindowResizingModeEnabled)
 
-	game := &Game{display: display}
+	game := &Game{
+		display:          display,
+		keyPressCallback: keyCallback,
+	}
 	return ebiten.RunGame(game)
 }
