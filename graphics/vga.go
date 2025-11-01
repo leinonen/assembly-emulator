@@ -128,6 +128,11 @@ func NewGame(memory *emulator.Memory) *Game {
 
 // Update updates the game state
 func (g *Game) Update() error {
+	// Check if window is being closed
+	if ebiten.IsWindowBeingClosed() {
+		return ebiten.Termination
+	}
+
 	// Check for ESC key to close window
 	if inpututil.IsKeyJustPressed(ebiten.KeyEscape) {
 		// Notify CPU about ESC key press

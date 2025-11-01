@@ -76,6 +76,8 @@ func main() {
 					fmt.Fprintf(os.Stderr, "Graphics error: %v\n", err)
 				}
 				close(graphicsDone)
+				// Signal CPU to stop when graphics window closes
+				cpu.Stop()
 			}()
 		}
 	}
@@ -94,20 +96,28 @@ func main() {
 	// Run the program
 	err = cpu.Run()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Runtime error: %v\n", err)
-		os.Exit(1)
+		// Check if it's a stop signal (not a real error)
+		if err.Error() != "CPU stopped by external signal" {
+			fmt.Fprintf(os.Stderr, "Runtime error: %v\n", err)
+			os.Exit(1)
+		}
+		// If stopped by external signal, this is normal (window closed)
+		fmt.Println("Program stopped (window closed).")
+	} else {
+		fmt.Println("Program halted.")
+		fmt.Printf("Final CPU state: %s\n", cpu.String())
 	}
-
-	fmt.Println("Program halted.")
-	fmt.Printf("Final CPU state: %s\n", cpu.String())
 
 	// If graphics was started, wait for it to close
 	graphicsMutex.Lock()
 	if graphicsStarted {
 		graphicsMutex.Unlock()
-		fmt.Println("Graphics window is open. Press ESC or close the window to exit.")
-		// Wait for graphics window to close
-		<-graphicsDone
+		// Only wait if we haven't already been stopped
+		if err == nil {
+			fmt.Println("Graphics window is open. Press ESC or close the window to exit.")
+			// Wait for graphics window to close
+			<-graphicsDone
+		}
 	} else {
 		graphicsMutex.Unlock()
 	}

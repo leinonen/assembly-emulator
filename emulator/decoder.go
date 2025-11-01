@@ -218,6 +218,14 @@ func getOperandCount(opcode Opcode) int {
 // Run executes the program until HLT or error
 func (c *CPU) Run() error {
 	for !c.Halted {
+		// Check if stop signal was received (non-blocking)
+		select {
+		case <-c.stopChan:
+			return fmt.Errorf("CPU stopped by external signal")
+		default:
+			// Continue execution
+		}
+
 		if err := c.Step(); err != nil {
 			return err
 		}

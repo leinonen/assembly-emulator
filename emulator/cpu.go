@@ -45,6 +45,9 @@ type CPU struct {
 	keyboardScancode uint8 // Last key scancode
 	keyboardASCII    uint8 // Last key ASCII code
 	keyAvailable     bool  // True if a key is waiting to be read
+
+	// Stop channel for external termination signal
+	stopChan chan struct{}
 }
 
 // Flags represents CPU flags
@@ -58,8 +61,9 @@ type Flags struct {
 // NewCPU creates a new CPU instance
 func NewCPU() *CPU {
 	return &CPU{
-		Memory: NewMemory(),
-		SP:     0xFFFE, // Stack grows downward from top of memory
+		Memory:   NewMemory(),
+		SP:       0xFFFE, // Stack grows downward from top of memory
+		stopChan: make(chan struct{}),
 	}
 }
 
@@ -282,4 +286,15 @@ func (c *CPU) SetKeyPress(scancode, ascii uint8) {
 	c.keyboardScancode = scancode
 	c.keyboardASCII = ascii
 	c.keyAvailable = true
+}
+
+// Stop signals the CPU to stop execution
+// This is used to terminate infinite loops when the graphics window closes
+func (c *CPU) Stop() {
+	select {
+	case <-c.stopChan:
+		// Already stopped
+	default:
+		close(c.stopChan)
+	}
 }
