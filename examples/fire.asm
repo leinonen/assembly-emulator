@@ -4,45 +4,62 @@
     mov ax, 0x13
     int 0x10
 
-    ; Set up fire palette (64 colors)
+    ; Set up fire palette (256 colors) - smooth black → red → orange → yellow → white
     mov dx, 0x3C8
     mov al, 0
     out dx, al
     mov dx, 0x3C9
 
-    ; Colors 0-31: Black to red
-    mov cx, 32
-    pal_red:
-        mov al, cl
-        shl al, 1
+    ; Colors 0-63: Black to red (red: 0 → 63)
+    mov cx, 64
+    mov bx, 0
+    pal_black_to_red:
+        mov al, bl        ; Red: 0-63
         out dx, al
         xor al, al
-        out dx, al
-        out dx, al
-        loop pal_red
+        out dx, al        ; Green = 0
+        out dx, al        ; Blue = 0
+        inc bx
+        loop pal_black_to_red
 
-    ; Colors 32-47: Red to orange/yellow
-    mov cx, 16
-    pal_orange:
+    ; Colors 64-127: Red to orange (red=63, green: 0 → 63)
+    mov cx, 64
+    mov bx, 0
+    pal_red_to_orange:
         mov al, 63
-        out dx, al
-        mov al, cl
-        shl al, 2
+        out dx, al        ; Red = 63
+        mov al, bl        ; Green: 0-63
         out dx, al
         xor al, al
-        out dx, al
-        loop pal_orange
+        out dx, al        ; Blue = 0
+        inc bx
+        loop pal_red_to_orange
 
-    ; Colors 48-63: Yellow to white
-    mov cx, 16
-    pal_white:
+    ; Colors 128-191: Orange to yellow (red=63, green=63, blue: 0 → 63)
+    mov cx, 64
+    mov bx, 0
+    pal_orange_to_yellow:
         mov al, 63
+        out dx, al        ; Red = 63
+        mov al, 63
+        out dx, al        ; Green = 63
+        mov al, bl        ; Blue: 0-63
         out dx, al
-        out dx, al
-        mov al, cl
-        shl al, 2
-        out dx, al
-        loop pal_white
+        inc bx
+        loop pal_orange_to_yellow
+
+    ; Colors 192-255: Yellow to white (all at 63, stay bright)
+    mov cx, 64
+    mov bx, 0
+    pal_yellow_to_white:
+        mov al, 63
+        out dx, al        ; Red = 63
+        mov al, 63
+        out dx, al        ; Green = 63
+        mov al, 63
+        out dx, al        ; Blue = 63 (pure white/yellow)
+        inc bx
+        loop pal_yellow_to_white
 
     ; Set DS and ES to back buffer segment for rendering (0x7000)
     ; This is our off-screen buffer in regular RAM (64000 bytes)
@@ -61,10 +78,13 @@
 
 ; Main loop
 main_loop:
-    ; Step 1: Fill bottom line with varied random hot pixels
-    mov di, 63680
+    ; Step 1: Fill bottom TWO lines with random hot pixels and black specks
+    ; Line 198 (offset 63360) and Line 199 (offset 63680)
+
+    ; Fill line 198
+    mov di, 63360
     mov cx, 320
-    fill_bottom:
+    fill_line_198:
         ; Better PRNG
         mov ax, bp
         mov bx, ax
@@ -75,94 +95,116 @@ main_loop:
         xor ax, bx
         mov bp, ax
 
-        ; More varied random values (40-63) for better effect
-        and al, 0x1F   ; 0-31
-        add al, 40     ; 40-71
-        cmp al, 63
-        jbe heat_ok
-        mov al, 63
-        heat_ok:
+        ; Use high bit to determine if this should be a black speck
+        test ah, 0x80     ; Test bit 15 of random value
+        jz hot_pixel_198
 
+        ; Black speck (about 1 in 2 chance based on high bit)
+        ; But let's make it less frequent - check another bit
+        test ah, 0x40
+        jz hot_pixel_198
+
+        xor al, al        ; Black pixel
+        jmp write_198
+
+        hot_pixel_198:
+        ; High intensity for fire source (192-255)
+        and al, 0x3F      ; 0-63
+        add al, 192       ; 192-255
+
+        write_198:
         mov [di], al
         inc di
-        loop fill_bottom
+        loop fill_line_198
 
-    ; Step 2: Propagate fire upward
-    ; Copy each line from the line below
-    ; Process lines 198 down to 0
-    mov bx, 198
+    ; Fill line 199
+    mov di, 63680
+    mov cx, 320
+    fill_line_199:
+        ; Better PRNG
+        mov ax, bp
+        mov bx, ax
+        shl ax, 7
+        xor ax, bx
+        mov bx, ax
+        shr bx, 9
+        xor ax, bx
+        mov bp, ax
 
-    copy_lines:
+        ; Use high bits to determine if this should be a black speck
+        test ah, 0x80
+        jz hot_pixel_199
+        test ah, 0x40
+        jz hot_pixel_199
+
+        xor al, al        ; Black pixel
+        jmp write_199
+
+        hot_pixel_199:
+        ; High intensity for fire source (192-255)
+        and al, 0x3F      ; 0-63
+        add al, 192       ; 192-255
+
+        write_199:
+        mov [di], al
+        inc di
+        loop fill_line_199
+
+    ; Step 2: Classic fire propagation with 4-point averaging
+    ; Process from line 197 down to 0 (lines 198-199 are the heat source)
+    mov bx, 197
+
+    propagate_lines:
         cmp bx, 0
         jl check_key
 
-        ; Source = (bx+1) * 320
-        mov ax, bx
-        inc ax
-        mov dx, 320
-        mul dx
-        mov si, ax
-
-        ; Dest = bx * 320
+        ; Calculate destination line offset
         mov ax, bx
         mov dx, 320
         mul dx
         mov di, ax
 
-        ; Copy 320 pixels with horizontal averaging
-        ; Skip first and last pixel (edges)
-        inc si
+        ; Skip first pixel (left edge)
         inc di
+
+        ; Process middle pixels (x = 1 to 318)
         mov cx, 318
 
-        copy_pixels:
-            ; Read 3 pixels: left, center, right
-            mov al, [si]      ; Center
-            mov ah, 0
-            push ax
+        propagate_pixels:
+            ; Average 4 pixels: [x-1,y+1], [x,y+1], [x+1,y+1], [x,y+2]
+            xor ax, ax
 
-            dec si
-            mov al, [si]      ; Left
-            mov ah, 0
-            mov dx, ax
-            inc si
-            pop ax
-            add ax, dx        ; Sum = center + left
+            ; Pixel [x-1, y+1] = di + 319
+            mov al, [di + 319]
 
-            inc si
-            mov dl, [si]      ; Right
-            mov dh, 0
-            add ax, dx        ; Sum = center + left + right
-            dec si
+            ; Pixel [x, y+1] = di + 320
+            xor dx, dx
+            mov dl, [di + 320]
+            add ax, dx
 
-            ; Less cooling - divide by 3 approximately
-            ; Shift by 2 would be /4, so shift by 1 for /2 which is closer
-            shr ax, 1
+            ; Pixel [x+1, y+1] = di + 321
+            mov dl, [di + 321]
+            add ax, dx
 
-            ; Very rare cooling - cool down 1 in 16 times
-            mov dx, bp
-            and dx, 15
-            cmp dx, 0
-            jne write_it
+            ; Pixel [x, y+2] = di + 640
+            mov dl, [di + 640]
+            add ax, dx
 
+            ; Divide by 4
+            shr ax, 2
+
+            ; Apply decay (cool down by 1)
             cmp ax, 0
-            je write_it
+            je write_pixel
             dec ax
 
-            write_it:
-            ; Write to destination
+            write_pixel:
             mov [di], al
-
-            inc si
             inc di
-            loop copy_pixels
-
-        ; Handle last pixel
-        inc si
-        inc di
+            loop propagate_pixels
 
         dec bx
-        jmp copy_lines
+        jmp propagate_lines
 
     check_key:
         ; Check for ESC key (non-blocking check)
