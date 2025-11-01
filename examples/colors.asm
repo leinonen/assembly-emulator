@@ -4,6 +4,10 @@
 MOV AX, 0x0013
 INT 0x10
 
+; Set ES to VGA segment
+MOV AX, 0xA000
+MOV ES, AX
+
 ; Set palette color 1 to BRIGHT RED (63, 0, 0)
 MOV DX, 0x03C8
 MOV AL, 1

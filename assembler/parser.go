@@ -568,6 +568,8 @@ func encodeRegister(reg string) byte {
 		"AL": 4, "AH": 5, "BL": 6, "BH": 7,
 		"CL": 8, "CH": 9, "DL": 10, "DH": 11,
 		"SI": 12, "DI": 13, "BP": 14, "SP": 15,
+		// Segment registers
+		"CS": 16, "DS": 17, "ES": 18, "SS": 19,
 	}
 
 	if code, ok := regMap[reg]; ok {

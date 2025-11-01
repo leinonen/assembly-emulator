@@ -32,22 +32,38 @@ Press **ESC** or close window to exit.
     MOV AX, 13h        ; Set VGA Mode 13h
     INT 10h
 
-    MOV AX, 0xA000     ; VGA memory base
-    ADD AX, 1000       ; Offset
-    MOV BX, 4          ; Red color
-    MOV [AX], BX       ; Write pixel (2 bytes)
+    MOV AX, 0xA000     ; Set ES to VGA segment
+    MOV ES, AX
+
+    XOR DI, DI         ; DI = 0 (offset)
+    MOV AL, 4          ; Red color
+    MOV [DI], AL       ; Write pixel to ES:DI (VGA memory)
     HLT
 ```
 
 **Number formats:** `100` (decimal), `0x64` / `64h` (hex), `0A000h` (hex with letter)
 
-**Memory:** `[BX]`, `[SI]`, `[DI+10]` - 16-bit word operations (2 bytes)
+**Memory:** `[BX]`, `[SI]`, `[DI+10]` - supports both byte and word operations
+
+**Segments:** CS, DS, ES, SS - full x86 real mode segment support
 
 ## VGA Programming
 
-**Mode 13h:** 320×200, 256 colors, linear memory at 0xA000
+**Mode 13h:** 320×200, 256 colors
 
-**Pixel address:** `0xA000 + (Y * 320 + X)`
+**Memory access:** VGA memory is at segment 0xA000 (linear address 0xA0000)
+
+```asm
+; Set ES to VGA segment
+MOV AX, 0xA000
+MOV ES, AX
+
+; Write pixel at position (X, Y)
+; Offset = Y * 320 + X
+MOV DI, 0           ; offset
+MOV AL, 15          ; white color
+MOV [DI], AL        ; writes to ES:DI
+```
 
 **Colors 0-15:** Black, Blue, Green, Cyan, Red, Magenta, Brown, LightGray, DarkGray, LightBlue, LightGreen, LightCyan, LightRed, LightMagenta, Yellow, White
 
@@ -111,23 +127,29 @@ exit_program:
 
 ## Registers
 
-**16-bit:** AX, BX, CX, DX, SI, DI, BP, SP, IP
-**8-bit:** AL/AH, BL/BH, CL/CH, DL/DH
+**General Purpose (16-bit):** AX, BX, CX, DX, SI, DI, BP, SP
+**General Purpose (8-bit):** AL/AH, BL/BH, CL/CH, DL/DH
+**Segment:** CS (Code), DS (Data), ES (Extra), SS (Stack)
+**Special:** IP (Instruction Pointer)
 **Flags:** CF, ZF, SF, OF
 
 ## Memory Map
 
-```
-0x0000-0x03FF : Protected (1KB)
-0x0400-0x9FFF : VGA wrapped (39KB)
-0xA000-0xFFFF : VGA primary (24KB)
-```
+**Total addressable memory:** 1MB (x86 real mode)
 
-VGA memory (64KB) accessed via wrapped addressing - values beyond 16-bit wrap to low memory.
+**VGA Memory:** Linear address 0xA0000-0xAFFFF (64,000 bytes)
+- Access via segment 0xA000, offset 0x0000-0xF9FF
+- 320×200 pixels = 64,000 bytes
+
+**Segmentation:** Uses authentic x86 real mode addressing
+- Linear address = (segment << 4) + offset
+- All segments default to 0x0000 for backward compatibility
 
 ## Features
 
 - **VGA Mode 13h graphics** - 320×200 resolution with 256-color palette
+- **x86 real mode segments** - Full CS, DS, ES, SS support with authentic addressing
+- **1MB addressable memory** - True 20-bit address space
 - **Customizable palette** - Modify colors via VGA DAC ports (0x3C8/0x3C9)
 - **Keyboard input** - INT 16h for interactive programs
 - **Window control** - Press ESC or close window to exit (works with infinite loops)
@@ -135,17 +157,21 @@ VGA memory (64KB) accessed via wrapped addressing - values beyond 16-bit wrap to
 
 ## Troubleshooting
 
-**Black screen:** Write to 0xA000+, check addresses, remember MOV writes 2 bytes
+**Black screen:**
+- Set ES to 0xA000: `MOV AX, 0xA000; MOV ES, AX`
+- Use segment-based addressing: `MOV [DI], AL` writes to ES:DI
+- Ensure program stays in a loop (busy-wait on keyboard) for graphics to render
+
 **Won't assemble:** Use `h` suffix for hex starting with letters (`0A000h`)
-**Partial fill:** ~256 bytes in protected area unreachable
+
 **Program won't exit:** Close the VGA window or press ESC - the emulator will terminate gracefully
 
 ## Limitations
 
-- 16-bit mode, no segments (flat model with VGA wrapping)
-- Word-based memory (2 bytes per write)
-- Limited instruction set
+- 16-bit real mode only (no protected mode)
+- Limited instruction set (no advanced x86 instructions)
 - No FPU
+- INT 16h function 0x00 is non-blocking (use function 0x01 in a loop for keyboard waits)
 
 ## Dependencies
 

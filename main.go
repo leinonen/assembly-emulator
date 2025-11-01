@@ -45,7 +45,7 @@ func main() {
 
 	fmt.Printf("Assembly successful! Generated %d bytes of code.\n", len(bytecode))
 
-	// Create CPU and load program
+	// Create CPU and load program at linear address 0 (CS:0000 with CS=0)
 	cpu := emulator.NewCPU()
 	cpu.Memory.LoadProgram(0, bytecode)
 

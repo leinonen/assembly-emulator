@@ -93,13 +93,16 @@ type Instruction struct {
 
 // Operand represents an instruction operand
 type Operand struct {
-	Type     OperandType
-	Reg16    *uint16  // Pointer to 16-bit register
-	Reg8Get  func() uint8
-	Reg8Set  func(uint8)
-	Imm16    uint16
-	Imm8     uint8
-	MemAddr  uint16
+	Type        OperandType
+	Reg16       *uint16 // Pointer to 16-bit register
+	RegSeg      *uint16 // Pointer to segment register (CS, DS, ES, SS)
+	Reg8Get     func() uint8
+	Reg8Set     func(uint8)
+	Imm16       uint16
+	Imm8        uint8
+	MemAddr     uint16 // Offset within segment
+	MemSegment  uint16 // Segment for memory access (will be set to DS/ES/SS/CS)
+	SegOverride bool   // True if segment was explicitly overridden
 }
 
 // Execute executes a single instruction
@@ -207,7 +210,8 @@ func (c *CPU) execMOV(inst Instruction) error {
 	// If source is 8-bit and destination is memory, write byte not word
 	if (inst.Src.Type == OpTypeReg8 || inst.Src.Type == OpTypeImm8) &&
 		(inst.Dest.Type == OpTypeMem || inst.Dest.Type == OpTypeMemReg) {
-		c.Memory.WriteByte(inst.Dest.MemAddr, uint8(val&0xFF))
+		addr := CalculateLinearAddress(inst.Dest.MemSegment, inst.Dest.MemAddr)
+		c.Memory.WriteByteLinear(addr, uint8(val&0xFF))
 		return nil
 	}
 
@@ -743,10 +747,10 @@ func (c *CPU) getOperandValue(op Operand) uint16 {
 		return op.Imm16
 	case OpTypeImm8:
 		return uint16(op.Imm8)
-	case OpTypeMem:
-		return c.Memory.ReadWord(op.MemAddr)
-	case OpTypeMemReg:
-		return c.Memory.ReadWord(op.MemAddr)
+	case OpTypeMem, OpTypeMemReg:
+		// Use segmented addressing
+		addr := CalculateLinearAddress(op.MemSegment, op.MemAddr)
+		return c.Memory.ReadWordLinear(addr)
 	}
 	return 0
 }
@@ -762,10 +766,10 @@ func (c *CPU) setOperandValue(op Operand, val uint16) {
 		if op.Reg8Set != nil {
 			op.Reg8Set(uint8(val & 0xFF))
 		}
-	case OpTypeMem:
-		c.Memory.WriteWord(op.MemAddr, val)
-	case OpTypeMemReg:
-		c.Memory.WriteWord(op.MemAddr, val)
+	case OpTypeMem, OpTypeMemReg:
+		// Use segmented addressing
+		addr := CalculateLinearAddress(op.MemSegment, op.MemAddr)
+		c.Memory.WriteWordLinear(addr, val)
 	}
 }
 

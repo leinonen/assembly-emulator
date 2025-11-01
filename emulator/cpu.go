@@ -16,6 +16,12 @@ type CPU struct {
 	BP uint16 // Base Pointer
 	SP uint16 // Stack Pointer
 
+	// Segment registers
+	CS uint16 // Code Segment
+	DS uint16 // Data Segment
+	ES uint16 // Extra Segment
+	SS uint16 // Stack Segment
+
 	// Instruction pointer
 	IP uint16
 
@@ -63,6 +69,10 @@ func NewCPU() *CPU {
 	return &CPU{
 		Memory:   NewMemory(),
 		SP:       0xFFFE, // Stack grows downward from top of memory
+		CS:       0x0000, // Code segment starts at 0
+		DS:       0x0000, // Data segment starts at 0
+		ES:       0x0000, // Extra segment starts at 0
+		SS:       0x0000, // Stack segment starts at 0
 		stopChan: make(chan struct{}),
 	}
 }
@@ -77,6 +87,10 @@ func (c *CPU) Reset() {
 	c.DI = 0
 	c.BP = 0
 	c.SP = 0xFFFE
+	c.CS = 0
+	c.DS = 0
+	c.ES = 0
+	c.SS = 0
 	c.IP = 0
 	c.Flags = Flags{}
 	c.Halted = false
@@ -163,22 +177,24 @@ func (c *CPU) SetDH(val uint8) {
 	c.DX = (c.DX & 0x00FF) | (uint16(val) << 8)
 }
 
-// Push pushes a 16-bit value onto the stack
+// Push pushes a 16-bit value onto the stack using SS:SP
 func (c *CPU) Push(val uint16) error {
 	if c.SP < 2 {
 		return fmt.Errorf("stack overflow")
 	}
 	c.SP -= 2
-	c.Memory.WriteWord(c.SP, val)
+	addr := CalculateLinearAddress(c.SS, c.SP)
+	c.Memory.WriteWordLinear(addr, val)
 	return nil
 }
 
-// Pop pops a 16-bit value from the stack
+// Pop pops a 16-bit value from the stack using SS:SP
 func (c *CPU) Pop() (uint16, error) {
 	if c.SP > 0xFFFC {
 		return 0, fmt.Errorf("stack underflow")
 	}
-	val := c.Memory.ReadWord(c.SP)
+	addr := CalculateLinearAddress(c.SS, c.SP)
+	val := c.Memory.ReadWordLinear(addr)
 	c.SP += 2
 	return val, nil
 }
@@ -212,8 +228,10 @@ func (c *CPU) UpdateFlags8(val uint8) {
 
 // String returns a string representation of CPU state
 func (c *CPU) String() string {
-	return fmt.Sprintf("AX:%04X BX:%04X CX:%04X DX:%04X SI:%04X DI:%04X BP:%04X SP:%04X IP:%04X [%s%s%s%s]",
+	return fmt.Sprintf("AX:%04X BX:%04X CX:%04X DX:%04X SI:%04X DI:%04X BP:%04X SP:%04X IP:%04X\n"+
+		"CS:%04X DS:%04X ES:%04X SS:%04X [%s%s%s%s]",
 		c.AX, c.BX, c.CX, c.DX, c.SI, c.DI, c.BP, c.SP, c.IP,
+		c.CS, c.DS, c.ES, c.SS,
 		flagStr("C", c.Flags.CF),
 		flagStr("Z", c.Flags.ZF),
 		flagStr("S", c.Flags.SF),

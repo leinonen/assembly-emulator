@@ -2,15 +2,15 @@ package emulator
 
 import "fmt"
 
-// Decode decodes the next instruction at the current IP
+// Decode decodes the next instruction at the current IP using CS:IP
 func (c *CPU) Decode() (Instruction, error) {
-	// Note: len(c.Memory.RAM) is 0x10000, which wraps to 0 when cast to uint16
-	// So we need to check against the constant instead
-	if int(c.IP) >= len(c.Memory.RAM) {
-		return Instruction{}, fmt.Errorf("IP out of bounds: 0x%04X", c.IP)
+	// Calculate linear address from CS:IP
+	addr := CalculateLinearAddress(c.CS, c.IP)
+	if addr >= TotalMemorySize {
+		return Instruction{}, fmt.Errorf("IP out of bounds: CS:IP = %04X:%04X (linear: 0x%05X)", c.CS, c.IP, addr)
 	}
 
-	opcode := Opcode(c.Memory.ReadByte(c.IP))
+	opcode := Opcode(c.Memory.ReadByteLinear(addr))
 	c.IP++
 
 	inst := Instruction{
@@ -40,11 +40,12 @@ func (c *CPU) Decode() (Instruction, error) {
 }
 
 func (c *CPU) decodeOperand() (Operand, int, error) {
-	if int(c.IP) >= len(c.Memory.RAM) {
+	addr := CalculateLinearAddress(c.CS, c.IP)
+	if addr >= TotalMemorySize {
 		return Operand{}, 0, fmt.Errorf("unexpected end of instruction")
 	}
 
-	opType := OperandType(c.Memory.ReadByte(c.IP))
+	opType := OperandType(c.Memory.ReadByteLinear(addr))
 	c.IP++
 	size := 1
 
@@ -53,7 +54,8 @@ func (c *CPU) decodeOperand() (Operand, int, error) {
 
 	switch opType {
 	case OpTypeReg16:
-		regCode := c.Memory.ReadByte(c.IP)
+		addr = CalculateLinearAddress(c.CS, c.IP)
+		regCode := c.Memory.ReadByteLinear(addr)
 		c.IP++
 		size++
 
@@ -64,7 +66,8 @@ func (c *CPU) decodeOperand() (Operand, int, error) {
 		op.Reg16 = reg
 
 	case OpTypeReg8:
-		regCode := c.Memory.ReadByte(c.IP)
+		addr = CalculateLinearAddress(c.CS, c.IP)
+		regCode := c.Memory.ReadByteLinear(addr)
 		c.IP++
 		size++
 
@@ -76,35 +79,45 @@ func (c *CPU) decodeOperand() (Operand, int, error) {
 		op.Reg8Set = setter
 
 	case OpTypeImm8:
-		op.Imm8 = c.Memory.ReadByte(c.IP)
+		addr = CalculateLinearAddress(c.CS, c.IP)
+		op.Imm8 = c.Memory.ReadByteLinear(addr)
 		c.IP++
 		size++
 
 	case OpTypeImm16:
-		op.Imm16 = c.Memory.ReadWord(c.IP)
+		addr = CalculateLinearAddress(c.CS, c.IP)
+		op.Imm16 = c.Memory.ReadWordLinear(addr)
 		c.IP += 2
 		size += 2
 
 	case OpTypeMem:
-		op.MemAddr = c.Memory.ReadWord(c.IP)
+		addr = CalculateLinearAddress(c.CS, c.IP)
+		op.MemAddr = c.Memory.ReadWordLinear(addr)
 		c.IP += 2
 		size += 2
+		// Default to DS segment for direct memory access
+		op.MemSegment = c.DS
+		op.SegOverride = false
 
 	case OpTypeMemReg:
-		regCode := c.Memory.ReadByte(c.IP)
+		addr = CalculateLinearAddress(c.CS, c.IP)
+		regCode := c.Memory.ReadByteLinear(addr)
 		c.IP++
 		size++
 
-		offset := c.Memory.ReadWord(c.IP)
+		addr = CalculateLinearAddress(c.CS, c.IP)
+		offset := c.Memory.ReadWordLinear(addr)
 		c.IP += 2
 		size += 2
 
-		// Calculate effective address
-		addr, err := c.calculateMemRegAddress(regCode, offset)
+		// Calculate effective offset (not linear address yet)
+		effectiveOffset, seg, err := c.calculateMemRegAddress(regCode, offset)
 		if err != nil {
 			return op, size, err
 		}
-		op.MemAddr = addr
+		op.MemAddr = effectiveOffset
+		op.MemSegment = seg
+		op.SegOverride = false
 
 	default:
 		return op, size, fmt.Errorf("unknown operand type: 0x%02X", opType)
@@ -131,6 +144,15 @@ func (c *CPU) decodeRegister16(code byte) (*uint16, error) {
 		return &c.BP, nil
 	case 15:
 		return &c.SP, nil
+	// Segment registers
+	case 16:
+		return &c.CS, nil
+	case 17:
+		return &c.DS, nil
+	case 18:
+		return &c.ES, nil
+	case 19:
+		return &c.SS, nil
 	default:
 		return nil, fmt.Errorf("invalid 16-bit register code: %d", code)
 	}
@@ -159,31 +181,40 @@ func (c *CPU) decodeRegister8(code byte) (func() uint8, func(uint8), error) {
 	}
 }
 
-func (c *CPU) calculateMemRegAddress(regCode byte, offset uint16) (uint16, error) {
+func (c *CPU) calculateMemRegAddress(regCode byte, offset uint16) (uint16, uint16, error) {
 	var base uint16
+	var segment uint16
 
 	switch regCode {
 	case 0:
 		base = c.AX
+		segment = c.DS // Default to DS
 	case 1:
 		base = c.BX
+		segment = c.DS
 	case 2:
 		base = c.CX
+		segment = c.DS
 	case 3:
 		base = c.DX
+		segment = c.DS
 	case 12:
 		base = c.SI
+		segment = c.DS
 	case 13:
 		base = c.DI
+		segment = c.ES // DI typically uses ES for string operations
 	case 14:
 		base = c.BP
+		segment = c.SS // BP typically uses SS (stack frame access)
 	case 15:
 		base = c.SP
+		segment = c.SS // SP uses SS
 	default:
-		return 0, fmt.Errorf("invalid register code for memory addressing: %d", regCode)
+		return 0, 0, fmt.Errorf("invalid register code for memory addressing: %d", regCode)
 	}
 
-	return base + offset, nil
+	return base + offset, segment, nil
 }
 
 func getOperandCount(opcode Opcode) int {

@@ -5,6 +5,10 @@
 MOV AX, 0x0013
 INT 0x10
 
+; Set ES to VGA segment
+MOV AX, 0xA000
+MOV ES, AX
+
 ; --- Create 256-color gradient palette from black to white ---
 MOV DX, 0x03C8   ; DAC Write Index
 XOR AL, AL       ; Start at palette index 0

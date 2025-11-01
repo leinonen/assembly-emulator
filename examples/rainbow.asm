@@ -5,6 +5,10 @@
 MOV AX, 0x0013
 INT 0x10
 
+; Set ES to VGA segment
+MOV AX, 0xA000
+MOV ES, AX
+
 ; Create a simple rainbow palette
 ; Colors 0-63: Red gradient
 ; Colors 64-127: Green gradient
