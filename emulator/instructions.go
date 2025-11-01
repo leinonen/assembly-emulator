@@ -205,16 +205,26 @@ func (c *CPU) Execute(inst Instruction) error {
 
 // MOV instruction
 func (c *CPU) execMOV(inst Instruction) error {
-	val := c.getOperandValue(inst.Src)
+	// Special handling for 8-bit memory reads (e.g., MOV AL, [SI])
+	if (inst.Src.Type == OpTypeMem || inst.Src.Type == OpTypeMemReg) &&
+		(inst.Dest.Type == OpTypeReg8) {
+		addr := CalculateLinearAddress(inst.Src.MemSegment, inst.Src.MemAddr)
+		val := c.Memory.ReadByteLinear(addr)
+		c.setOperandValue(inst.Dest, uint16(val))
+		return nil
+	}
 
-	// If source is 8-bit and destination is memory, write byte not word
+	// Special handling for 8-bit memory writes (e.g., MOV [DI], AL)
 	if (inst.Src.Type == OpTypeReg8 || inst.Src.Type == OpTypeImm8) &&
 		(inst.Dest.Type == OpTypeMem || inst.Dest.Type == OpTypeMemReg) {
 		addr := CalculateLinearAddress(inst.Dest.MemSegment, inst.Dest.MemAddr)
+		val := c.getOperandValue(inst.Src)
 		c.Memory.WriteByteLinear(addr, uint8(val&0xFF))
 		return nil
 	}
 
+	// Default: use word operations
+	val := c.getOperandValue(inst.Src)
 	c.setOperandValue(inst.Dest, val)
 	return nil
 }
