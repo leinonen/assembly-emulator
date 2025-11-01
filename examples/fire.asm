@@ -1,4 +1,4 @@
-; Classic Fire Effect - Working version
+; Classic Fire Effect - Double Buffered (Demoscene Style)
 .code
     ; Set VGA Mode 13h
     mov ax, 0x13
@@ -44,8 +44,9 @@
         out dx, al
         loop pal_white
 
-    ; Set DS and ES to VGA
-    mov ax, 0xA000
+    ; Set DS and ES to back buffer segment for rendering (0x7000)
+    ; This is our off-screen buffer in regular RAM (64000 bytes)
+    mov ax, 0x7000
     mov ds, ax
     mov es, ax
 
@@ -164,13 +165,50 @@ main_loop:
         jmp copy_lines
 
     check_key:
+        ; Check for ESC key (non-blocking check)
         mov ah, 0x01
         int 0x16
-        jz main_loop
+        jz do_flip  ; No key pressed, continue
 
         mov ah, 0x00
         int 0x16
         cmp al, 0x1B
-        jne main_loop
+        je exit_program
 
-    hlt
+    do_flip:
+        ; Wait for VBlank - this will block until next frame
+        ; Ensures smooth 60 FPS animation without tearing
+        mov dx, 0x3DA
+        in al, dx        ; Reading 0x3DA waits for VBlank via channel
+
+        ; DOUBLE BUFFER FLIP: Copy complete back buffer to VGA memory
+        ; This is the classic demoscene technique - atomic page flip!
+        push ds
+        push es
+
+        ; Source: back buffer at 0x7000
+        mov ax, 0x7000
+        mov ds, ax
+        xor si, si
+
+        ; Dest: VGA memory
+        mov ax, 0xA000
+        mov es, ax
+        xor di, di
+
+        ; Copy 64000 bytes (320x200)
+        mov cx, 32000      ; 64000 / 2 = 32000 words
+        rep movsw
+
+        pop es
+        pop ds
+
+        ; Restore DS and ES to back buffer for next frame rendering
+        mov ax, 0x7000
+        mov ds, ax
+        mov es, ax
+
+        jmp main_loop
+
+    exit_program:
+        hlt

@@ -1,5 +1,7 @@
 package emulator
 
+import "sync"
+
 const (
 	// Memory size constants for x86 real mode (1MB addressable)
 	TotalMemorySize = 0x100000 // 1MB total addressable memory
@@ -9,8 +11,9 @@ const (
 
 // Memory represents the system memory including VGA video memory
 type Memory struct {
-	RAM []byte // 1MB RAM (VGA is mapped within this space at 0xA0000)
-	VGA []byte // VGA video memory (separate for easy rendering access)
+	RAM     []byte     // 1MB RAM (VGA is mapped within this space at 0xA0000)
+	VGA     []byte     // VGA video memory (separate for easy rendering access)
+	vgaMux  sync.Mutex // Mutex to protect VGA memory from race conditions
 }
 
 // NewMemory creates a new memory instance
@@ -113,7 +116,18 @@ func (m *Memory) LoadProgram(addr uint32, program []byte) {
 	}
 }
 
+// LockVGA locks the VGA memory mutex (call before reading VGA memory for rendering)
+func (m *Memory) LockVGA() {
+	m.vgaMux.Lock()
+}
+
+// UnlockVGA unlocks the VGA memory mutex (call after reading VGA memory for rendering)
+func (m *Memory) UnlockVGA() {
+	m.vgaMux.Unlock()
+}
+
 // GetVGAMemory returns a reference to the VGA memory for rendering
+// IMPORTANT: Caller must call LockVGA() before and UnlockVGA() after using this
 func (m *Memory) GetVGAMemory() []byte {
 	return m.VGA
 }

@@ -228,3 +228,88 @@ func TestNumberParsing(t *testing.T) {
 		})
 	}
 }
+
+// TestStringInstructions tests that string instructions are recognized and encoded correctly
+func TestStringInstructions(t *testing.T) {
+	tests := []struct {
+		name     string
+		source   string
+		expected byte // expected opcode
+	}{
+		{"MOVSB", "MOVSB", 0x70},
+		{"MOVSW", "MOVSW", 0x71},
+		{"STOSB", "STOSB", 0x72},
+		{"STOSW", "STOSW", 0x73},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lexer := NewLexer(tt.source)
+			tokens, err := lexer.Tokenize()
+			if err != nil {
+				t.Fatalf("Lexer failed: %v", err)
+			}
+
+			parser := NewParser(tokens)
+			bytecode, err := parser.Parse()
+			if err != nil {
+				t.Fatalf("Parser failed: %v", err)
+			}
+
+			// First byte should be the instruction opcode
+			if len(bytecode) == 0 {
+				t.Fatal("No bytecode generated")
+			}
+
+			if bytecode[0] != tt.expected {
+				t.Errorf("Expected opcode 0x%02X, got 0x%02X", tt.expected, bytecode[0])
+			}
+		})
+	}
+}
+
+// TestREPPrefix tests that REP prefix is handled correctly
+func TestREPPrefix(t *testing.T) {
+	tests := []struct {
+		name           string
+		source         string
+		expectedPrefix byte // REP prefix
+		expectedOpcode byte // instruction opcode
+	}{
+		{"REP MOVSB", "REP MOVSB", 0xF3, 0x70},
+		{"REP MOVSW", "REP MOVSW", 0xF3, 0x71},
+		{"REP STOSB", "REP STOSB", 0xF3, 0x72},
+		{"REP STOSW", "REP STOSW", 0xF3, 0x73},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lexer := NewLexer(tt.source)
+			tokens, err := lexer.Tokenize()
+			if err != nil {
+				t.Fatalf("Lexer failed: %v", err)
+			}
+
+			parser := NewParser(tokens)
+			bytecode, err := parser.Parse()
+			if err != nil {
+				t.Fatalf("Parser failed: %v", err)
+			}
+
+			// Should have at least 2 bytes (REP prefix + opcode)
+			if len(bytecode) < 2 {
+				t.Fatalf("Expected at least 2 bytes, got %d", len(bytecode))
+			}
+
+			// First byte should be REP prefix (0xF3)
+			if bytecode[0] != tt.expectedPrefix {
+				t.Errorf("Expected REP prefix 0x%02X, got 0x%02X", tt.expectedPrefix, bytecode[0])
+			}
+
+			// Second byte should be the instruction opcode
+			if bytecode[1] != tt.expectedOpcode {
+				t.Errorf("Expected opcode 0x%02X, got 0x%02X", tt.expectedOpcode, bytecode[1])
+			}
+		})
+	}
+}

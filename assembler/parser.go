@@ -149,11 +149,20 @@ func (p *Parser) parseDirective() error {
 }
 
 func (p *Parser) parseInstructionSize() error {
-	_ = strings.ToUpper(p.current().Value)
+	instr := strings.ToUpper(p.current().Value)
 	p.advance()
 
 	// Calculate actual instruction size by parsing operands
 	size := 1 // Opcode
+
+	// Check for REP prefix
+	if instr == "REP" {
+		size++ // REP prefix byte (0xF3)
+		// Get the actual instruction after REP
+		if !p.isAtEnd() && p.current().Type == TokenInstruction {
+			p.advance()
+		}
+	}
 
 	// Parse operands and calculate their sizes
 	for !p.isAtEnd() && p.current().Type != TokenNewline && p.current().Type != TokenComment {
@@ -241,6 +250,19 @@ func (p *Parser) parseInstruction() error {
 	instr := strings.ToUpper(instrToken.Value)
 	p.advance()
 
+	// Check for REP prefix
+	hasREP := false
+	if instr == "REP" {
+		hasREP = true
+		// Get the actual instruction after REP
+		if p.isAtEnd() || p.current().Type != TokenInstruction {
+			return fmt.Errorf("expected instruction after REP prefix at line %d", instrToken.Line)
+		}
+		instrToken = p.current()
+		instr = strings.ToUpper(instrToken.Value)
+		p.advance()
+	}
+
 	// Parse operands
 	var operands []Operand
 
@@ -259,7 +281,7 @@ func (p *Parser) parseInstruction() error {
 	}
 
 	// Generate code for instruction
-	if err := p.generateInstruction(instr, operands); err != nil {
+	if err := p.generateInstruction(instr, operands, hasREP); err != nil {
 		return fmt.Errorf("error at line %d: %v", instrToken.Line, err)
 	}
 
@@ -428,7 +450,7 @@ const (
 )
 
 // Generate instruction bytecode (simplified encoding)
-func (p *Parser) generateInstruction(instr string, operands []Operand) error {
+func (p *Parser) generateInstruction(instr string, operands []Operand, hasREP bool) error {
 	// Map instruction to opcode
 	var opcode emulator.Opcode
 	var ok bool
@@ -492,11 +514,22 @@ func (p *Parser) generateInstruction(instr string, operands []Operand) error {
 
 		"IN":  emulator.OpIN,
 		"OUT": emulator.OpOUT,
+
+		// String instructions
+		"MOVSB": emulator.OpMOVSB,
+		"MOVSW": emulator.OpMOVSW,
+		"STOSB": emulator.OpSTOSB,
+		"STOSW": emulator.OpSTOSW,
 	}
 
 	opcode, ok = opcodeMap[instr]
 	if !ok {
 		return fmt.Errorf("unknown instruction: %s", instr)
+	}
+
+	// Emit REP prefix if present
+	if hasREP {
+		p.emit(0xF3)
 	}
 
 	// Emit opcode

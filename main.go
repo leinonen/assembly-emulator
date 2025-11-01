@@ -72,7 +72,7 @@ func main() {
 
 			// Run graphics in goroutine
 			go func() {
-				if err := graphics.RunGraphicsWithDisplay(vgaDisplay, keyCallback); err != nil {
+				if err := graphics.RunGraphicsWithDisplay(vgaDisplay, cpu, keyCallback); err != nil {
 					fmt.Fprintf(os.Stderr, "Graphics error: %v\n", err)
 				}
 				close(graphicsDone)

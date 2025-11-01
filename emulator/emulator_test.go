@@ -160,36 +160,41 @@ func TestJumpAndLoop(t *testing.T) {
 func TestVGAMemory(t *testing.T) {
 	cpu := NewCPU()
 
-	// Write to VGA memory at 0xA000
-	cpu.Memory.WriteByte(0xA000, 15) // White pixel
+	// Write to VGA memory at linear address 0xA0000 (segment 0xA000, offset 0)
+	cpu.Memory.WriteByteLinear(0xA0000, 15) // White pixel
 
 	// Read it back
-	val := cpu.Memory.ReadByte(0xA000)
+	val := cpu.Memory.ReadByteLinear(0xA0000)
 	if val != 15 {
 		t.Errorf("Expected VGA[0]=15, got %d", val)
 	}
 
-	// Verify it's in VGA, not RAM
-	if cpu.Memory.RAM[0xA000] == 15 {
-		t.Error("Value was written to RAM instead of VGA")
-	}
+	// Verify it's in VGA memory
 	if cpu.Memory.VGA[0] != 15 {
 		t.Error("Value was not written to VGA memory")
 	}
+
+	// Verify it's also mirrored in RAM at 0xA0000
+	if cpu.Memory.RAM[0xA0000] != 15 {
+		t.Error("Value was not mirrored to RAM[0xA0000]")
+	}
 }
 
-// TestProtectedMemory tests that low memory is protected from writes
-func TestProtectedMemory(t *testing.T) {
+// TestSegmentedAddressing tests segment:offset to linear address conversion
+func TestSegmentedAddressing(t *testing.T) {
 	cpu := NewCPU()
 
-	// Load some code
-	cpu.Memory.RAM[0] = 0x01 // OpMOV
+	// Test that segment:offset addressing works correctly
+	// Write to segment 0x1000, offset 0x0050 (linear = 0x10050)
+	linearAddr := CalculateLinearAddress(0x1000, 0x0050)
+	if linearAddr != 0x10050 {
+		t.Errorf("Expected linear address 0x10050, got 0x%05X", linearAddr)
+	}
 
-	// Try to write to protected low memory
-	cpu.Memory.WriteByte(0, 0xFF)
-
-	// Verify it was not written
-	if cpu.Memory.RAM[0] != 0x01 {
-		t.Error("Protected memory was overwritten")
+	// Write and read back
+	cpu.Memory.WriteByteLinear(linearAddr, 0x42)
+	val := cpu.Memory.ReadByteLinear(linearAddr)
+	if val != 0x42 {
+		t.Errorf("Expected 0x42, got 0x%02X", val)
 	}
 }

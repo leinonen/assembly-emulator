@@ -68,6 +68,12 @@ const (
 	// I/O
 	OpIN  Opcode = 0x60
 	OpOUT Opcode = 0x61
+
+	// String operations
+	OpMOVSB Opcode = 0x70
+	OpMOVSW Opcode = 0x71
+	OpSTOSB Opcode = 0x72
+	OpSTOSW Opcode = 0x73
 )
 
 // Operand types
@@ -88,7 +94,8 @@ type Instruction struct {
 	Opcode     Opcode
 	Dest       Operand
 	Src        Operand
-	Size       int // Instruction size in bytes
+	Size       int  // Instruction size in bytes
+	HasREP     bool // True if REP prefix (0xF3) is present
 }
 
 // Operand represents an instruction operand
@@ -197,6 +204,15 @@ func (c *CPU) Execute(inst Instruction) error {
 		return c.execOUT(inst)
 	case OpIN:
 		return c.execIN(inst)
+
+	case OpMOVSB:
+		return c.execMOVSB(inst)
+	case OpMOVSW:
+		return c.execMOVSW(inst)
+	case OpSTOSB:
+		return c.execSTOSB(inst)
+	case OpSTOSW:
+		return c.execSTOSW(inst)
 
 	default:
 		return fmt.Errorf("unknown opcode: 0x%02X", inst.Opcode)
@@ -842,6 +858,70 @@ func (c *CPU) execIN(inst Instruction) error {
 	} else {
 		return fmt.Errorf("IN: invalid destination operand")
 	}
+
+	return nil
+}
+
+// MOVSB - Move byte from DS:SI to ES:DI
+func (c *CPU) execMOVSB(inst Instruction) error {
+	// Read byte from DS:SI
+	srcAddr := CalculateLinearAddress(c.DS, c.SI)
+	value := c.Memory.ReadByteLinear(srcAddr)
+
+	// Write byte to ES:DI
+	destAddr := CalculateLinearAddress(c.ES, c.DI)
+	c.Memory.WriteByteLinear(destAddr, value)
+
+	// Update SI and DI (assume DF=0, increment)
+	c.SI++
+	c.DI++
+
+	return nil
+}
+
+// MOVSW - Move word from DS:SI to ES:DI
+func (c *CPU) execMOVSW(inst Instruction) error {
+	// Read word from DS:SI
+	srcAddr := CalculateLinearAddress(c.DS, c.SI)
+	value := c.Memory.ReadWordLinear(srcAddr)
+
+	// Write word to ES:DI
+	destAddr := CalculateLinearAddress(c.ES, c.DI)
+	c.Memory.WriteWordLinear(destAddr, value)
+
+	// Update SI and DI by 2 (assume DF=0, increment)
+	c.SI += 2
+	c.DI += 2
+
+	return nil
+}
+
+// STOSB - Store AL to ES:DI
+func (c *CPU) execSTOSB(inst Instruction) error {
+	// Get value from AL
+	value := c.GetAL()
+
+	// Write byte to ES:DI
+	destAddr := CalculateLinearAddress(c.ES, c.DI)
+	c.Memory.WriteByteLinear(destAddr, value)
+
+	// Update DI (assume DF=0, increment)
+	c.DI++
+
+	return nil
+}
+
+// STOSW - Store AX to ES:DI
+func (c *CPU) execSTOSW(inst Instruction) error {
+	// Get value from AX
+	value := c.AX
+
+	// Write word to ES:DI
+	destAddr := CalculateLinearAddress(c.ES, c.DI)
+	c.Memory.WriteWordLinear(destAddr, value)
+
+	// Update DI by 2 (assume DF=0, increment)
+	c.DI += 2
 
 	return nil
 }

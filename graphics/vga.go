@@ -81,6 +81,8 @@ func (v *VGADisplay) initializeDefaultPalette() {
 
 // Update updates the display from VGA memory
 func (v *VGADisplay) Update() error {
+	// Lock VGA memory to prevent tearing while reading
+	v.memory.LockVGA()
 	vgaMem := v.memory.GetVGAMemory()
 
 	// Convert VGA memory to RGBA pixels
@@ -94,6 +96,7 @@ func (v *VGADisplay) Update() error {
 		v.pixels[pixelOffset+2] = c.B
 		v.pixels[pixelOffset+3] = c.A
 	}
+	v.memory.UnlockVGA()
 
 	return nil
 }
@@ -116,7 +119,9 @@ func (v *VGADisplay) Layout(outsideWidth, outsideHeight int) (int, int) {
 // Game wraps VGADisplay to implement ebiten.Game interface
 type Game struct {
 	display          *VGADisplay
-	keyPressCallback func(scancode, ascii uint8) // Callback to notify CPU of key press
+	cpu              interface{ SetVBlank(bool) } // CPU reference for VBlank synchronization
+	keyPressCallback func(scancode, ascii uint8)  // Callback to notify CPU of key press
+	frameCount       int                          // Internal frame counter for VBlank toggle
 }
 
 // NewGame creates a new game instance
@@ -128,6 +133,12 @@ func NewGame(memory *emulator.Memory) *Game {
 
 // Update updates the game state
 func (g *Game) Update() error {
+	// Signal VBlank at the start of each frame (60 FPS)
+	// This allows assembly code to sync with display updates
+	if g.cpu != nil {
+		g.cpu.SetVBlank(true)
+	}
+
 	// Check if window is being closed
 	if ebiten.IsWindowBeingClosed() {
 		return ebiten.Termination
@@ -197,13 +208,14 @@ func RunGraphics(memory *emulator.Memory) error {
 }
 
 // RunGraphicsWithDisplay starts the graphics window with a specific VGA display
-func RunGraphicsWithDisplay(display *VGADisplay, keyCallback func(scancode, ascii uint8)) error {
+func RunGraphicsWithDisplay(display *VGADisplay, cpu interface{ SetVBlank(bool) }, keyCallback func(scancode, ascii uint8)) error {
 	ebiten.SetWindowSize(ScreenWidth*Scale, ScreenHeight*Scale)
 	ebiten.SetWindowTitle("Assembly Emulator - VGA Mode 13h")
 	ebiten.SetWindowResizingMode(ebiten.WindowResizingModeEnabled)
 
 	game := &Game{
 		display:          display,
+		cpu:              cpu,
 		keyPressCallback: keyCallback,
 	}
 	return ebiten.RunGame(game)

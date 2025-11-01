@@ -10,12 +10,28 @@ func (c *CPU) Decode() (Instruction, error) {
 		return Instruction{}, fmt.Errorf("IP out of bounds: CS:IP = %04X:%04X (linear: 0x%05X)", c.CS, c.IP, addr)
 	}
 
+	// Check for REP prefix (0xF3)
+	firstByte := c.Memory.ReadByteLinear(addr)
+	hasREP := false
+	if firstByte == 0xF3 {
+		hasREP = true
+		c.IP++
+		addr = CalculateLinearAddress(c.CS, c.IP)
+		if addr >= TotalMemorySize {
+			return Instruction{}, fmt.Errorf("IP out of bounds after REP prefix")
+		}
+	}
+
 	opcode := Opcode(c.Memory.ReadByteLinear(addr))
 	c.IP++
 
 	inst := Instruction{
 		Opcode: opcode,
 		Size:   1,
+		HasREP: hasREP,
+	}
+	if hasREP {
+		inst.Size++ // Account for REP prefix byte
 	}
 
 	// Decode operands based on instruction
@@ -273,6 +289,23 @@ func (c *CPU) Step() error {
 	inst, err := c.Decode()
 	if err != nil {
 		return fmt.Errorf("decode error at IP=0x%04X: %v", c.IP-1, err)
+	}
+
+	// Handle REP prefix for string instructions
+	if inst.HasREP {
+		// REP repeats the string instruction CX times
+		switch inst.Opcode {
+		case OpMOVSB, OpMOVSW, OpSTOSB, OpSTOSW:
+			for c.CX > 0 {
+				if err := c.Execute(inst); err != nil {
+					return fmt.Errorf("execution error at IP=0x%04X: %v", c.IP-uint16(inst.Size), err)
+				}
+				c.CX--
+			}
+			return nil
+		default:
+			return fmt.Errorf("REP prefix not valid for opcode 0x%02X", inst.Opcode)
+		}
 	}
 
 	if err := c.Execute(inst); err != nil {

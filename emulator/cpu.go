@@ -52,6 +52,12 @@ type CPU struct {
 	keyboardASCII    uint8 // Last key ASCII code
 	keyAvailable     bool  // True if a key is waiting to be read
 
+	// VBlank state (for VGA synchronization via port 0x3DA)
+	VBlankActive   bool          // Current VBlank state (bit 3 of port 0x3DA)
+	FrameCounter   uint64        // Frame counter for timing
+	vblankChan     chan struct{} // Channel to signal VBlank events
+	waitingVBlank  bool          // True if CPU is waiting for VBlank
+
 	// Stop channel for external termination signal
 	stopChan chan struct{}
 }
@@ -67,13 +73,14 @@ type Flags struct {
 // NewCPU creates a new CPU instance
 func NewCPU() *CPU {
 	return &CPU{
-		Memory:   NewMemory(),
-		SP:       0xFFFE, // Stack grows downward from top of memory
-		CS:       0x0000, // Code segment starts at 0
-		DS:       0x0000, // Data segment starts at 0
-		ES:       0x0000, // Extra segment starts at 0
-		SS:       0x0000, // Stack segment starts at 0
-		stopChan: make(chan struct{}),
+		Memory:     NewMemory(),
+		SP:         0xFFFE, // Stack grows downward from top of memory
+		CS:         0x0000, // Code segment starts at 0
+		DS:         0x0000, // Data segment starts at 0
+		ES:         0x0000, // Extra segment starts at 0
+		SS:         0x0000, // Stack segment starts at 0
+		stopChan:   make(chan struct{}),
+		vblankChan: make(chan struct{}, 1), // Buffered to prevent blocking
 	}
 }
 
@@ -293,6 +300,27 @@ func (c *CPU) InByte(port uint16) uint8 {
 	case 0x3C9: // DAC Data (read)
 		// For now, return 0 (proper implementation would read from palette)
 		return 0
+	case 0x3DA: // Input Status Register 1 (VGA status)
+		// Bit 3: Vertical retrace (VBlank) - 1 during VBlank, 0 otherwise
+		// Bit 0: Display enable (usually 1)
+
+		// Wait for next VBlank signal from graphics loop
+		// This blocks the CPU until the next frame starts
+		select {
+		case <-c.vblankChan:
+			// VBlank occurred - frame sync
+			c.VBlankActive = true
+		case <-c.stopChan:
+			// CPU stopped
+		}
+
+		var status uint8 = 0x01 // Display enabled
+		if c.VBlankActive {
+			status |= 0x08 // Set bit 3
+		}
+		// Clear VBlank after reading
+		c.VBlankActive = false
+		return status
 	default:
 		return 0
 	}
@@ -304,6 +332,20 @@ func (c *CPU) SetKeyPress(scancode, ascii uint8) {
 	c.keyboardScancode = scancode
 	c.keyboardASCII = ascii
 	c.keyAvailable = true
+}
+
+// SetVBlank sets the VBlank state for synchronization with the graphics loop
+// This is called by the graphics Update() method at the start of each frame
+func (c *CPU) SetVBlank(active bool) {
+	if active {
+		c.FrameCounter++
+		// Signal VBlank to waiting CPU (non-blocking)
+		select {
+		case c.vblankChan <- struct{}{}:
+		default:
+			// Channel full, skip (CPU not waiting yet)
+		}
+	}
 }
 
 // Stop signals the CPU to stop execution
