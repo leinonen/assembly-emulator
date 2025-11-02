@@ -16,16 +16,18 @@ const (
 
 // VGADisplay represents the VGA Mode 13h display
 type VGADisplay struct {
-	memory  *emulator.Memory
-	pixels  []byte
-	palette [256]color.RGBA
+	memory       *emulator.Memory
+	pixels       []byte
+	palette      [256]color.RGBA
+	screenBuffer *ebiten.Image // Offscreen buffer for pixel-perfect rendering
 }
 
 // NewVGADisplay creates a new VGA display
 func NewVGADisplay(memory *emulator.Memory) *VGADisplay {
 	vga := &VGADisplay{
-		memory: memory,
-		pixels: make([]byte, ScreenWidth*ScreenHeight*4), // RGBA
+		memory:       memory,
+		pixels:       make([]byte, ScreenWidth*ScreenHeight*4), // RGBA
+		screenBuffer: ebiten.NewImage(ScreenWidth, ScreenHeight),
 	}
 
 	// Initialize with standard VGA default palette
@@ -103,7 +105,13 @@ func (v *VGADisplay) Update() error {
 
 // Draw draws the VGA display
 func (v *VGADisplay) Draw(screen *ebiten.Image) {
-	screen.WritePixels(v.pixels)
+	// Write pixels to offscreen buffer
+	v.screenBuffer.WritePixels(v.pixels)
+
+	// Draw buffer to screen with nearest-neighbor filtering for pixel-perfect scaling
+	opts := &ebiten.DrawImageOptions{}
+	opts.Filter = ebiten.FilterNearest
+	screen.DrawImage(v.screenBuffer, opts)
 }
 
 // SetPaletteColor sets a single palette entry
@@ -202,6 +210,7 @@ func RunGraphics(memory *emulator.Memory) error {
 	ebiten.SetWindowSize(ScreenWidth*Scale, ScreenHeight*Scale)
 	ebiten.SetWindowTitle("Assembly Emulator - VGA Mode 13h")
 	ebiten.SetWindowResizingMode(ebiten.WindowResizingModeEnabled)
+	ebiten.SetScreenClearedEveryFrame(false) // Optimization: we redraw everything each frame
 
 	game := NewGame(memory)
 	return ebiten.RunGame(game)

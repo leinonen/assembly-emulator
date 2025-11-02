@@ -152,6 +152,33 @@ func (p *Parser) parseInstructionSize() error {
 	instr := strings.ToUpper(p.current().Value)
 	p.advance()
 
+	// Handle DB/DW/DD directives - each value is 1/2/4 bytes
+	if instr == "DB" || instr == "DW" || instr == "DD" {
+		var bytesPerValue uint16
+		switch instr {
+		case "DB":
+			bytesPerValue = 1
+		case "DW":
+			bytesPerValue = 2
+		case "DD":
+			bytesPerValue = 4
+		}
+
+		// Count the number of values
+		valueCount := uint16(0)
+		for !p.isAtEnd() && p.current().Type != TokenNewline && p.current().Type != TokenComment {
+			if p.current().Type == TokenComma {
+				p.advance()
+				continue
+			}
+			valueCount++
+			p.advance()
+		}
+
+		p.address += valueCount * bytesPerValue
+		return nil
+	}
+
 	// Calculate actual instruction size by parsing operands
 	size := 1 // Opcode
 
@@ -249,6 +276,11 @@ func (p *Parser) parseInstruction() error {
 	instrToken := p.current()
 	instr := strings.ToUpper(instrToken.Value)
 	p.advance()
+
+	// Handle DB (define byte) directive
+	if instr == "DB" || instr == "DW" || instr == "DD" {
+		return p.parseDataDirective(instr, instrToken.Line)
+	}
 
 	// Check for REP prefix
 	hasREP := false
@@ -584,6 +616,49 @@ func (p *Parser) emitOperand(op Operand) {
 		p.emit(encodeRegister(op.Reg))
 		p.emitWord(op.Offset)
 	}
+}
+
+func (p *Parser) parseDataDirective(directive string, line int) error {
+	// Parse comma-separated list of values and emit them as raw bytes
+	for !p.isAtEnd() && p.current().Type != TokenNewline && p.current().Type != TokenComment {
+		if p.current().Type == TokenComma {
+			p.advance()
+			continue
+		}
+
+		if p.current().Type != TokenNumber {
+			return fmt.Errorf("expected number in %s directive at line %d", directive, line)
+		}
+
+		val, err := ParseNumber(p.current().Value)
+		if err != nil {
+			return fmt.Errorf("invalid number in %s directive at line %d: %v", directive, line, err)
+		}
+
+		switch directive {
+		case "DB":
+			// Emit byte
+			if val > 0xFF {
+				return fmt.Errorf("value %d too large for DB directive at line %d", val, line)
+			}
+			p.emit(byte(val))
+
+		case "DW":
+			// Emit word (16-bit, little-endian)
+			p.emitWord(val)
+
+		case "DD":
+			// Emit dword (32-bit, little-endian)
+			p.emit(byte(val & 0xFF))
+			p.emit(byte((val >> 8) & 0xFF))
+			p.emit(byte((val >> 16) & 0xFF))
+			p.emit(byte((val >> 24) & 0xFF))
+		}
+
+		p.advance()
+	}
+
+	return nil
 }
 
 func is8BitRegister(reg string) bool {
