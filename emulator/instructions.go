@@ -444,10 +444,7 @@ func (c *CPU) execNOT(inst Instruction) error {
 // SHL instruction (shift left)
 func (c *CPU) execSHL(inst Instruction) error {
 	val := c.getOperandValue(inst.Dest)
-	count := c.getOperandValue(inst.Src)
-	if count > 16 {
-		count = 16
-	}
+	count := min(c.getOperandValue(inst.Src), 16)
 
 	if count > 0 {
 		// Last bit shifted out goes to CF
@@ -463,10 +460,7 @@ func (c *CPU) execSHL(inst Instruction) error {
 // SHR instruction (shift right logical)
 func (c *CPU) execSHR(inst Instruction) error {
 	val := c.getOperandValue(inst.Dest)
-	count := c.getOperandValue(inst.Src)
-	if count > 16 {
-		count = 16
-	}
+	count := min(c.getOperandValue(inst.Src), 16)
 
 	if count > 0 {
 		// Last bit shifted out goes to CF
@@ -482,10 +476,7 @@ func (c *CPU) execSHR(inst Instruction) error {
 // SAR instruction (shift right arithmetic - preserves sign)
 func (c *CPU) execSAR(inst Instruction) error {
 	val := c.getOperandValue(inst.Dest)
-	count := c.getOperandValue(inst.Src)
-	if count > 16 {
-		count = 16
-	}
+	count := min(c.getOperandValue(inst.Src), 16)
 
 	if count > 0 {
 		signed := int16(val)
@@ -621,7 +612,7 @@ func (c *CPU) execCALL(inst Instruction) error {
 }
 
 // RET instruction
-func (c *CPU) execRET(inst Instruction) error {
+func (c *CPU) execRET(_ Instruction) error {
 	addr, err := c.Pop()
 	if err != nil {
 		return err
@@ -692,7 +683,8 @@ func (c *CPU) handleInt10() error {
 
 	case 0x10: // Set palette register
 		al := c.GetAL()
-		if al == 0x00 {
+		switch al {
+		case 0x00:
 			// Set single palette register
 			// BL = color register to set
 			// BH = color value
@@ -706,13 +698,13 @@ func (c *CPU) handleInt10() error {
 				b := r
 				c.SetPaletteCallback(index, r, g, b)
 			}
-		} else if al == 0x10 {
+		case 0x10:
 			// Set individual DAC register
 			// BX = register number
 			// DH = green, CH = blue, CL = red (each 0-63)
 			if c.SetPaletteCallback != nil {
 				index := byte(c.BX & 0xFF)
-				r := byte((c.CX & 0x3F) * 4)      // CL * 4
+				r := byte((c.CX & 0x3F) * 4)        // CL * 4
 				g := byte(((c.DX >> 8) & 0x3F) * 4) // DH * 4
 				b := byte(((c.CX >> 8) & 0x3F) * 4) // CH * 4
 				c.SetPaletteCallback(index, r, g, b)
@@ -833,13 +825,14 @@ func (c *CPU) execOUT(inst Instruction) error {
 
 	// Get value (typically from AL register)
 	value := uint8(0)
-	if inst.Src.Type == OpTypeReg8 {
+	switch inst.Src.Type {
+	case OpTypeReg8:
 		if inst.Src.Reg8Get != nil {
 			value = inst.Src.Reg8Get()
 		}
-	} else if inst.Src.Type == OpTypeImm8 {
+	case OpTypeImm8:
 		value = inst.Src.Imm8
-	} else {
+	default:
 		return fmt.Errorf("OUT: invalid value operand")
 	}
 
@@ -879,7 +872,7 @@ func (c *CPU) execIN(inst Instruction) error {
 }
 
 // MOVSB - Move byte from DS:SI to ES:DI
-func (c *CPU) execMOVSB(inst Instruction) error {
+func (c *CPU) execMOVSB(_ Instruction) error {
 	// Read byte from DS:SI
 	srcAddr := CalculateLinearAddress(c.DS, c.SI)
 	value := c.Memory.ReadByteLinear(srcAddr)
@@ -896,7 +889,7 @@ func (c *CPU) execMOVSB(inst Instruction) error {
 }
 
 // MOVSW - Move word from DS:SI to ES:DI
-func (c *CPU) execMOVSW(inst Instruction) error {
+func (c *CPU) execMOVSW(_ Instruction) error {
 	// Read word from DS:SI
 	srcAddr := CalculateLinearAddress(c.DS, c.SI)
 	value := c.Memory.ReadWordLinear(srcAddr)
@@ -913,7 +906,7 @@ func (c *CPU) execMOVSW(inst Instruction) error {
 }
 
 // STOSB - Store AL to ES:DI
-func (c *CPU) execSTOSB(inst Instruction) error {
+func (c *CPU) execSTOSB(_ Instruction) error {
 	// Get value from AL
 	value := c.GetAL()
 
@@ -928,7 +921,7 @@ func (c *CPU) execSTOSB(inst Instruction) error {
 }
 
 // STOSW - Store AX to ES:DI
-func (c *CPU) execSTOSW(inst Instruction) error {
+func (c *CPU) execSTOSW(_ Instruction) error {
 	// Get value from AX
 	value := c.AX
 

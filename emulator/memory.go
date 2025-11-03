@@ -40,12 +40,6 @@ func (m *Memory) Clear() {
 	}
 }
 
-// ReadByte reads a byte from memory (legacy flat addressing - deprecated)
-// Use ReadByteLinear for segmented addressing
-func (m *Memory) ReadByte(addr uint16) uint8 {
-	return m.ReadByteLinear(uint32(addr))
-}
-
 // ReadByteLinear reads a byte from linear (physical) address
 func (m *Memory) ReadByteLinear(addr uint32) uint8 {
 	// Ensure address is within 1MB
@@ -58,12 +52,6 @@ func (m *Memory) ReadByteLinear(addr uint32) uint8 {
 	}
 
 	return m.RAM[addr]
-}
-
-// WriteByte writes a byte to memory (legacy flat addressing - deprecated)
-// Use WriteByteLinear for segmented addressing
-func (m *Memory) WriteByte(addr uint16, val uint8) {
-	m.WriteByteLinear(uint32(addr), val)
 }
 
 // WriteByteLinear writes a byte to linear (physical) address
