@@ -22,8 +22,13 @@ const (
 	TokenColon
 	TokenLeftBracket
 	TokenRightBracket
+	TokenLeftParen
+	TokenRightParen
 	TokenPlus
 	TokenMinus
+	TokenMult
+	TokenDiv
+	TokenEquals
 	TokenDirective
 	TokenComment
 )
@@ -125,6 +130,41 @@ func (l *Lexer) Tokenize() ([]Token, error) {
 				l.addToken(TokenMinus, "-")
 				l.advance()
 			}
+			continue
+		}
+
+		// Equals
+		if ch == '=' {
+			l.addToken(TokenEquals, "=")
+			l.advance()
+			continue
+		}
+
+		// Mult
+		if ch == '*' {
+			l.addToken(TokenMult, "*")
+			l.advance()
+			continue
+		}
+
+		// Div
+		if ch == '/' {
+			l.addToken(TokenDiv, "/")
+			l.advance()
+			continue
+		}
+
+		// Left parenthesis
+		if ch == '(' {
+			l.addToken(TokenLeftParen, "(")
+			l.advance()
+			continue
+		}
+
+		// Right parenthesis
+		if ch == ')' {
+			l.addToken(TokenRightParen, ")")
+			l.advance()
 			continue
 		}
 
@@ -376,6 +416,7 @@ func isInstruction(name string) bool {
 		"REP", // REP prefix
 		"DB", "DW", "DD", // Data directives
 		"BYTE", "WORD", "DWORD",
+		"EQU", // Constant definition
 	}
 
 	for _, instr := range instructions {

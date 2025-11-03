@@ -313,3 +313,164 @@ func TestREPPrefix(t *testing.T) {
 		})
 	}
 }
+
+// TestPreprocessorEQU tests constant definition using EQU
+func TestPreprocessorEQU(t *testing.T) {
+	source := `MY_CONST EQU 42
+MOV AX, MY_CONST
+HLT`
+
+	lexer := NewLexer(source)
+	tokens, err := lexer.Tokenize()
+	if err != nil {
+		t.Fatalf("Lexer failed: %v", err)
+	}
+
+	preprocessor := NewPreprocessor()
+	tokens, err = preprocessor.Process(tokens)
+	if err != nil {
+		t.Fatalf("Preprocessor failed: %v", err)
+	}
+
+	parser := NewParser(tokens)
+	bytecode, err := parser.Parse()
+	if err != nil {
+		t.Fatalf("Parser failed: %v", err)
+	}
+
+	if len(bytecode) == 0 {
+		t.Fatal("Expected bytecode to be generated")
+	}
+
+	// Verify constant was defined
+	constants := preprocessor.GetConstants()
+	if val, ok := constants["MY_CONST"]; !ok || val != 42 {
+		t.Errorf("Expected MY_CONST to be 42, got %d (exists: %v)", val, ok)
+	}
+}
+
+// TestPreprocessorHexConstants tests hexadecimal constants
+func TestPreprocessorHexConstants(t *testing.T) {
+	source := `VGA_SEG EQU 0xA000
+DAC_WRITE EQU 0x3C8
+MOV AX, VGA_SEG
+MOV DX, DAC_WRITE
+HLT`
+
+	lexer := NewLexer(source)
+	tokens, err := lexer.Tokenize()
+	if err != nil {
+		t.Fatalf("Lexer failed: %v", err)
+	}
+
+	preprocessor := NewPreprocessor()
+	tokens, err = preprocessor.Process(tokens)
+	if err != nil {
+		t.Fatalf("Preprocessor failed: %v", err)
+	}
+
+	parser := NewParser(tokens)
+	bytecode, err := parser.Parse()
+	if err != nil {
+		t.Fatalf("Parser failed: %v", err)
+	}
+
+	if len(bytecode) == 0 {
+		t.Fatal("Expected bytecode to be generated")
+	}
+
+	// Verify constants
+	constants := preprocessor.GetConstants()
+	if val, ok := constants["VGA_SEG"]; !ok || val != 0xA000 {
+		t.Errorf("Expected VGA_SEG to be 0xA000, got 0x%X (exists: %v)", val, ok)
+	}
+	if val, ok := constants["DAC_WRITE"]; !ok || val != 0x3C8 {
+		t.Errorf("Expected DAC_WRITE to be 0x3C8, got 0x%X (exists: %v)", val, ok)
+	}
+}
+
+// TestPreprocessorConstantChaining tests defining constants in terms of other constants
+func TestPreprocessorConstantChaining(t *testing.T) {
+	source := `WIDTH EQU 320
+HEIGHT EQU 200
+TOTAL_PIXELS EQU WIDTH
+MOV AX, TOTAL_PIXELS
+HLT`
+
+	lexer := NewLexer(source)
+	tokens, err := lexer.Tokenize()
+	if err != nil {
+		t.Fatalf("Lexer failed: %v", err)
+	}
+
+	preprocessor := NewPreprocessor()
+	tokens, err = preprocessor.Process(tokens)
+	if err != nil {
+		t.Fatalf("Preprocessor failed: %v", err)
+	}
+
+	parser := NewParser(tokens)
+	bytecode, err := parser.Parse()
+	if err != nil {
+		t.Fatalf("Parser failed: %v", err)
+	}
+
+	if len(bytecode) == 0 {
+		t.Fatal("Expected bytecode to be generated")
+	}
+
+	// Verify TOTAL_PIXELS = WIDTH = 320
+	constants := preprocessor.GetConstants()
+	if val, ok := constants["TOTAL_PIXELS"]; !ok || val != 320 {
+		t.Errorf("Expected TOTAL_PIXELS to be 320, got %d (exists: %v)", val, ok)
+	}
+}
+
+// TestPreprocessorMultipleReferences tests multiple uses of the same constant
+func TestPreprocessorMultipleReferences(t *testing.T) {
+	source := `MY_VALUE EQU 100
+MOV AX, MY_VALUE
+MOV BX, MY_VALUE
+ADD AX, MY_VALUE
+HLT`
+
+	lexer := NewLexer(source)
+	tokens, err := lexer.Tokenize()
+	if err != nil {
+		t.Fatalf("Lexer failed: %v", err)
+	}
+
+	preprocessor := NewPreprocessor()
+	tokens, err = preprocessor.Process(tokens)
+	if err != nil {
+		t.Fatalf("Preprocessor failed: %v", err)
+	}
+
+	parser := NewParser(tokens)
+	bytecode, err := parser.Parse()
+	if err != nil {
+		t.Fatalf("Parser failed: %v", err)
+	}
+
+	if len(bytecode) == 0 {
+		t.Fatal("Expected bytecode to be generated")
+	}
+}
+
+// TestPreprocessorUndefinedConstant tests error handling for undefined constants
+func TestPreprocessorUndefinedConstant(t *testing.T) {
+	source := `MY_CONST EQU UNDEFINED_VALUE
+HLT`
+
+	lexer := NewLexer(source)
+	tokens, err := lexer.Tokenize()
+	if err != nil {
+		t.Fatalf("Lexer failed: %v", err)
+	}
+
+	preprocessor := NewPreprocessor()
+	_, err = preprocessor.Process(tokens)
+	if err == nil {
+		t.Fatal("Expected error for undefined constant, but got none")
+	}
+}

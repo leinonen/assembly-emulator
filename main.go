@@ -36,6 +36,14 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Preprocess constants
+	preprocessor := assembler.NewPreprocessor()
+	tokens, err = preprocessor.Process(tokens)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Preprocessor error: %v\n", err)
+		os.Exit(1)
+	}
+
 	parser := assembler.NewParser(tokens)
 	bytecode, err := parser.Parse()
 	if err != nil {
