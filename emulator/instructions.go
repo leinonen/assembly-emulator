@@ -247,7 +247,7 @@ func (c *CPU) execMOV(inst Instruction) error {
 
 // PUSH instruction
 func (c *CPU) execPUSH(inst Instruction) error {
-	val := c.getOperandValue(inst.Src)
+	val := c.getOperandValue(inst.Dest)
 	return c.Push(val)
 }
 
