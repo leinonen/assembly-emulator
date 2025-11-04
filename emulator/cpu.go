@@ -1,6 +1,9 @@
 package emulator
 
-import "fmt"
+import (
+	"assembly-emulator/font"
+	"fmt"
+)
 
 // CPU represents the x86 CPU state
 type CPU struct {
@@ -58,6 +61,12 @@ type CPU struct {
 	vblankChan     chan struct{} // Channel to signal VBlank events
 	waitingVBlank  bool          // True if CPU is waiting for VBlank
 
+	// Text cursor state (for BIOS INT 10h text output)
+	cursorX    uint8 // Cursor column (0-39 for 8-pixel chars in 320-width mode)
+	cursorY    uint8 // Cursor row (0-12 for 16-pixel chars in 200-height mode)
+	textColor  uint8 // Current text color (palette index)
+	textScale  uint8 // Text scale factor (default 1)
+
 	// Stop channel for external termination signal
 	stopChan chan struct{}
 }
@@ -72,8 +81,12 @@ type Flags struct {
 
 // NewCPU creates a new CPU instance
 func NewCPU() *CPU {
+	mem := NewMemory()
+	// Initialize BIOS ROM with CP437 font data
+	mem.InitializeBIOSROM()
+
 	return &CPU{
-		Memory:     NewMemory(),
+		Memory:     mem,
 		SP:         0xFFFE, // Stack grows downward from top of memory
 		CS:         0x0000, // Code segment starts at 0
 		DS:         0x0000, // Data segment starts at 0
@@ -81,6 +94,10 @@ func NewCPU() *CPU {
 		SS:         0x0000, // Stack segment starts at 0
 		stopChan:   make(chan struct{}),
 		vblankChan: make(chan struct{}, 1), // Buffered to prevent blocking
+		textScale:  1,                      // Default 1x text scale
+		cursorX:    0,                      // Start at top-left
+		cursorY:    0,
+		textColor:  15, // Default to white
 	}
 }
 
@@ -356,5 +373,42 @@ func (c *CPU) Stop() {
 		// Already stopped
 	default:
 		close(c.stopChan)
+	}
+}
+
+// drawCharToVGA draws a CP437 character directly to VGA memory
+// This is used by the INT 10h teletype function
+func (c *CPU) drawCharToVGA(char byte, x, y int, colorIndex byte, scale int) {
+	if scale < 1 {
+		scale = 1
+	}
+
+	glyph := font.CP437Font[char]
+
+	c.Memory.LockVGA()
+	defer c.Memory.UnlockVGA()
+
+	// Iterate through each row of the glyph
+	for row := 0; row < 16; row++ {
+		bits := glyph[row]
+
+		// Iterate through each pixel in the row (8 pixels)
+		for col := 0; col < 8; col++ {
+			// Check if bit is set (MSB is leftmost pixel)
+			if bits&(0x80>>col) != 0 {
+				// Draw scaled pixel
+				for sy := 0; sy < scale; sy++ {
+					for sx := 0; sx < scale; sx++ {
+						px := x + col*scale + sx
+						py := y + row*scale + sy
+
+						// Bounds check
+						if px >= 0 && px < 320 && py >= 0 && py < 200 {
+							c.Memory.SetVGAPixel(px, py, colorIndex)
+						}
+					}
+				}
+			}
+		}
 	}
 }

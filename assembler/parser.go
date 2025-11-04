@@ -164,18 +164,29 @@ func (p *Parser) parseInstructionSize() error {
 			bytesPerValue = 4
 		}
 
-		// Count the number of values
-		valueCount := uint16(0)
+		// Count the total number of bytes
+		totalBytes := uint16(0)
 		for !p.isAtEnd() && p.current().Type != TokenNewline && p.current().Type != TokenComment {
 			if p.current().Type == TokenComma {
 				p.advance()
 				continue
 			}
-			valueCount++
-			p.advance()
+
+			// Handle strings - each character becomes one byte
+			if p.current().Type == TokenString {
+				// For DB, each character is 1 byte
+				// For DW/DD, this would be an error (handled in parseDataDirective)
+				// Count RUNES (characters), not UTF-8 bytes!
+				totalBytes += uint16(len([]rune(p.current().Value)))
+				p.advance()
+			} else {
+				// Regular numeric value
+				totalBytes += bytesPerValue
+				p.advance()
+			}
 		}
 
-		p.address += valueCount * bytesPerValue
+		p.address += totalBytes
 		return nil
 	}
 
@@ -552,6 +563,8 @@ func (p *Parser) generateInstruction(instr string, operands []Operand, hasREP bo
 		"MOVSW": emulator.OpMOVSW,
 		"STOSB": emulator.OpSTOSB,
 		"STOSW": emulator.OpSTOSW,
+		"LODSB": emulator.OpLODSB,
+		"LODSW": emulator.OpLODSW,
 	}
 
 	opcode, ok = opcodeMap[instr]
@@ -626,8 +639,31 @@ func (p *Parser) parseDataDirective(directive string, line int) error {
 			continue
 		}
 
+		// Handle string literals (only valid for DB directive)
+		if p.current().Type == TokenString {
+			if directive != "DB" {
+				return fmt.Errorf("string literals are only supported in DB directive at line %d", line)
+			}
+
+			// Process escape sequences and convert to CP437
+			stringValue := p.processEscapeSequences(p.current().Value)
+			bytes, err := p.stringToCP437Bytes(stringValue)
+			if err != nil {
+				return fmt.Errorf("error converting string to CP437 at line %d: %v", line, err)
+			}
+
+			// Emit each byte
+			for _, b := range bytes {
+				p.emit(b)
+			}
+
+			p.advance()
+			continue
+		}
+
+		// Handle numeric values
 		if p.current().Type != TokenNumber {
-			return fmt.Errorf("expected number in %s directive at line %d", directive, line)
+			return fmt.Errorf("expected number or string in %s directive at line %d", directive, line)
 		}
 
 		val, err := ParseNumber(p.current().Value)
@@ -684,4 +720,115 @@ func encodeRegister(reg string) byte {
 		return code
 	}
 	return 0
+}
+
+// processEscapeSequences processes escape sequences in a string
+// Supports: \n (newline), \r (carriage return), \t (tab), \\ (backslash), \" (quote), \' (single quote)
+func (p *Parser) processEscapeSequences(s string) string {
+	result := make([]rune, 0, len(s))
+	runes := []rune(s)
+	i := 0
+	for i < len(runes) {
+		if runes[i] == '\\' && i+1 < len(runes) {
+			// Escape sequence
+			switch runes[i+1] {
+			case 'n':
+				result = append(result, '\n')
+				i += 2
+			case 'r':
+				result = append(result, '\r')
+				i += 2
+			case 't':
+				result = append(result, '\t')
+				i += 2
+			case '\\':
+				result = append(result, '\\')
+				i += 2
+			case '"':
+				result = append(result, '"')
+				i += 2
+			case '\'':
+				result = append(result, '\'')
+				i += 2
+			default:
+				// Unknown escape sequence - keep the backslash
+				result = append(result, runes[i])
+				i++
+			}
+		} else {
+			result = append(result, runes[i])
+			i++
+		}
+	}
+	return string(result)
+}
+
+// stringToCP437Bytes converts a UTF-8 string to CP437 bytes
+// Uses the CP437 encoding from the graphics package
+func (p *Parser) stringToCP437Bytes(s string) ([]byte, error) {
+	// Import the graphics package function
+	// We'll use a local implementation to avoid circular dependencies
+	result := make([]byte, 0, len(s))
+	for _, r := range s {
+		// Use the CP437 encoding table
+		b, err := runeToCP437Byte(r)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, b)
+	}
+	return result, nil
+}
+
+// runeToCP437Byte converts a single rune to its CP437 byte equivalent
+// This is a simplified implementation that covers the most common cases
+func runeToCP437Byte(r rune) (byte, error) {
+	// Build a reverse mapping from the CP437 table
+	// For simplicity, we'll hardcode the common box-drawing characters and ASCII
+
+	// ASCII range (0-127) maps directly
+	if r >= 0 && r <= 127 {
+		return byte(r), nil
+	}
+
+	// Extended ASCII / special characters mapping
+	cp437Map := map[rune]byte{
+		'☺': 0x01, '☻': 0x02, '♥': 0x03, '♦': 0x04, '♣': 0x05, '♠': 0x06,
+		'•': 0x07, '◘': 0x08, '○': 0x09, '◙': 0x0A, '♂': 0x0B, '♀': 0x0C,
+		'♪': 0x0D, '♫': 0x0E, '☼': 0x0F, '►': 0x10, '◄': 0x11, '↕': 0x12,
+		'‼': 0x13, '¶': 0x14, '§': 0x15, '▬': 0x16, '↨': 0x17, '↑': 0x18,
+		'↓': 0x19, '→': 0x1A, '←': 0x1B, '∟': 0x1C, '↔': 0x1D, '▲': 0x1E,
+		'▼': 0x1F, '⌂': 0x7F,
+		// Extended Latin characters
+		'Ç': 0x80, 'ü': 0x81, 'é': 0x82, 'â': 0x83, 'ä': 0x84, 'à': 0x85,
+		'å': 0x86, 'ç': 0x87, 'ê': 0x88, 'ë': 0x89, 'è': 0x8A, 'ï': 0x8B,
+		'î': 0x8C, 'ì': 0x8D, 'Ä': 0x8E, 'Å': 0x8F, 'É': 0x90, 'æ': 0x91,
+		'Æ': 0x92, 'ô': 0x93, 'ö': 0x94, 'ò': 0x95, 'û': 0x96, 'ù': 0x97,
+		'ÿ': 0x98, 'Ö': 0x99, 'Ü': 0x9A, '¢': 0x9B, '£': 0x9C, '¥': 0x9D,
+		'₧': 0x9E, 'ƒ': 0x9F, 'á': 0xA0, 'í': 0xA1, 'ó': 0xA2, 'ú': 0xA3,
+		'ñ': 0xA4, 'Ñ': 0xA5, 'ª': 0xA6, 'º': 0xA7, '¿': 0xA8, '⌐': 0xA9,
+		'¬': 0xAA, '½': 0xAB, '¼': 0xAC, '¡': 0xAD, '«': 0xAE, '»': 0xAF,
+		// Box-drawing characters (the most important ones for this use case)
+		'░': 0xB0, '▒': 0xB1, '▓': 0xB2, '│': 0xB3, '┤': 0xB4, '╡': 0xB5,
+		'╢': 0xB6, '╖': 0xB7, '╕': 0xB8, '╣': 0xB9, '║': 0xBA, '╗': 0xBB,
+		'╝': 0xBC, '╜': 0xBD, '╛': 0xBE, '┐': 0xBF, '└': 0xC0, '┴': 0xC1,
+		'┬': 0xC2, '├': 0xC3, '─': 0xC4, '┼': 0xC5, '╞': 0xC6, '╟': 0xC7,
+		'╚': 0xC8, '╔': 0xC9, '╩': 0xCA, '╦': 0xCB, '╠': 0xCC, '═': 0xCD,
+		'╬': 0xCE, '╧': 0xCF, '╨': 0xD0, '╤': 0xD1, '╥': 0xD2, '╙': 0xD3,
+		'╘': 0xD4, '╒': 0xD5, '╓': 0xD6, '╫': 0xD7, '╪': 0xD8, '┘': 0xD9,
+		'┌': 0xDA, '█': 0xDB, '▄': 0xDC, '▌': 0xDD, '▐': 0xDE, '▀': 0xDF,
+		// Greek and math symbols
+		'α': 0xE0, 'ß': 0xE1, 'Γ': 0xE2, 'π': 0xE3, 'Σ': 0xE4, 'σ': 0xE5,
+		'µ': 0xE6, 'τ': 0xE7, 'Φ': 0xE8, 'Θ': 0xE9, 'Ω': 0xEA, 'δ': 0xEB,
+		'∞': 0xEC, 'φ': 0xED, 'ε': 0xEE, '∩': 0xEF, '≡': 0xF0, '±': 0xF1,
+		'≥': 0xF2, '≤': 0xF3, '⌠': 0xF4, '⌡': 0xF5, '÷': 0xF6, '≈': 0xF7,
+		'°': 0xF8, '∙': 0xF9, '·': 0xFA, '√': 0xFB, 'ⁿ': 0xFC, '²': 0xFD,
+		'■': 0xFE, '\u00A0': 0xFF,
+	}
+
+	if b, ok := cp437Map[r]; ok {
+		return b, nil
+	}
+
+	return 0, fmt.Errorf("character '%c' (U+%04X) cannot be represented in CP437", r, r)
 }

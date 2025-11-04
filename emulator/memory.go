@@ -1,12 +1,21 @@
 package emulator
 
-import "sync"
+import (
+	"assembly-emulator/font"
+	"sync"
+)
 
 const (
 	// Memory size constants for x86 real mode (1MB addressable)
 	TotalMemorySize = 0x100000 // 1MB total addressable memory
 	VGAMemoryStart  = 0xA0000  // VGA memory starts at 0xA0000 (linear address)
 	VGAMemorySize   = 64000    // 320x200 pixels
+
+	// BIOS ROM constants
+	ROMStart      = 0xF0000  // BIOS ROM starts at 0xF0000 (960KB)
+	ROMSize       = 0x10000  // 64KB ROM space
+	BIOSFontAddr  = 0xFA000  // CP437 font location (F000:A000, adjusted to fit in 1MB)
+	BIOSFontSize  = 4096     // 256 characters * 16 bytes
 )
 
 // Memory represents the system memory including VGA video memory
@@ -58,6 +67,12 @@ func (m *Memory) ReadByteLinear(addr uint32) uint8 {
 func (m *Memory) WriteByteLinear(addr uint32, val uint8) {
 	// Ensure address is within 1MB
 	addr = addr & 0xFFFFF
+
+	// ROM area is read-only - ignore writes to 0xF0000-0xFFFFF
+	if addr >= ROMStart && addr < ROMStart+ROMSize {
+		// Silently ignore writes to ROM
+		return
+	}
 
 	// VGA memory mapping at 0xA0000-0xAFA00 (64000 bytes)
 	if addr >= VGAMemoryStart && addr < VGAMemoryStart+uint32(VGAMemorySize) {
@@ -140,5 +155,19 @@ func (m *Memory) SetVGAPixel(x, y int, color uint8) {
 	offset := y*320 + x
 	if offset < len(m.VGA) {
 		m.VGA[offset] = color
+	}
+}
+
+// InitializeBIOSROM initializes the BIOS ROM area with CP437 font data
+// This should be called once during CPU initialization
+func (m *Memory) InitializeBIOSROM() {
+	// Copy CP437 font data to ROM at standard BIOS font location
+	// Font is 256 characters * 16 bytes = 4096 bytes
+	for char := 0; char < 256; char++ {
+		for row := 0; row < 16; row++ {
+			addr := BIOSFontAddr + uint32(char*16+row)
+			// Directly write to RAM (bypass WriteByteLinear's ROM protection)
+			m.RAM[addr] = font.CP437Font[char][row]
+		}
 	}
 }

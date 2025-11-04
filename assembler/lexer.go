@@ -412,7 +412,7 @@ func isInstruction(name string) bool {
 		"LOOP", "LOOPE", "LOOPZ", "LOOPNE", "LOOPNZ",
 		"INT", "NOP", "HLT",
 		"IN", "OUT", // I/O instructions
-		"MOVSB", "MOVSW", "STOSB", "STOSW", // String instructions
+		"MOVSB", "MOVSW", "STOSB", "STOSW", "LODSB", "LODSW", // String instructions
 		"REP", // REP prefix
 		"DB", "DW", "DD", // Data directives
 		"BYTE", "WORD", "DWORD",

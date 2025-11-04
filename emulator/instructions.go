@@ -74,6 +74,8 @@ const (
 	OpMOVSW Opcode = 0x71
 	OpSTOSB Opcode = 0x72
 	OpSTOSW Opcode = 0x73
+	OpLODSB Opcode = 0x74
+	OpLODSW Opcode = 0x75
 )
 
 // Operand types
@@ -211,6 +213,10 @@ func (c *CPU) Execute(inst Instruction) error {
 		return c.execMOVSW(inst)
 	case OpSTOSB:
 		return c.execSTOSB(inst)
+	case OpLODSB:
+		return c.execLODSB(inst)
+	case OpLODSW:
+		return c.execLODSW(inst)
 	case OpSTOSW:
 		return c.execSTOSW(inst)
 
@@ -681,6 +687,57 @@ func (c *CPU) handleInt10() error {
 		}
 		return nil
 
+	case 0x0E: // Teletype output
+		// AL = character to write
+		// BL = foreground color (in graphics modes)
+		// BH = page number (ignored - we always use page 0)
+		char := c.GetAL()
+		color := c.GetBL()
+
+		// Update text color
+		c.textColor = color
+
+		// Handle special characters
+		switch char {
+		case 0x0D: // Carriage return
+			c.cursorX = 0
+		case 0x0A: // Line feed
+			c.cursorY++
+			// Check if we need to scroll (cursor beyond bottom of screen)
+			maxRows := uint8(200 / 16) // 12 rows for 16-pixel tall chars
+			if c.cursorY >= maxRows {
+				c.cursorY = maxRows - 1
+				// TODO: Implement scrolling if needed
+			}
+		case 0x08: // Backspace
+			if c.cursorX > 0 {
+				c.cursorX--
+			}
+		case 0x07: // Bell
+			// Ignore bell character (no audio support yet)
+		default:
+			// Draw character at cursor position
+			pixelX := int(c.cursorX) * 8 * int(c.textScale)
+			pixelY := int(c.cursorY) * 16 * int(c.textScale)
+
+			// Draw character directly to VGA memory
+			c.drawCharToVGA(char, pixelX, pixelY, c.textColor, int(c.textScale))
+
+			// Advance cursor
+			c.cursorX++
+			maxCols := uint8(320 / (8 * int(c.textScale))) // 40 cols for 8-pixel wide chars at 1x scale
+			if c.cursorX >= maxCols {
+				c.cursorX = 0
+				c.cursorY++
+				maxRows := uint8(200 / (16 * int(c.textScale))) // 12 rows for 16-pixel tall chars at 1x scale
+				if c.cursorY >= maxRows {
+					c.cursorY = maxRows - 1
+					// TODO: Implement scrolling if needed
+				}
+			}
+		}
+		return nil
+
 	case 0x10: // Set palette register
 		al := c.GetAL()
 		switch al {
@@ -709,6 +766,28 @@ func (c *CPU) handleInt10() error {
 				b := byte(((c.CX >> 8) & 0x3F) * 4) // CH * 4
 				c.SetPaletteCallback(index, r, g, b)
 			}
+		}
+		return nil
+
+	case 0x11: // Character generator routines
+		al := c.GetAL()
+		switch al {
+		case 0x30: // Get font information
+			// Returns:
+			// ES:BP = pointer to font data
+			// CX = bytes per character (16 for 8x16 font)
+			// DL = rows on screen - 1 (11 for 200/16 - 1)
+
+			// Calculate segment:offset for BIOS font address
+			// BIOS font is at 0xFA000 (F000:A000 in segment:offset)
+			// Use F000:A000 representation (more traditional BIOS ROM segment)
+			fontSeg := uint16(0xF000)  // Segment: F000
+			fontOff := uint16(0xA000)  // Offset: A000
+
+			c.ES = fontSeg
+			c.BP = fontOff
+			c.CX = 16  // 16 bytes per character (8x16 font)
+			c.SetDL(11) // 12 rows - 1 (200/16 = 12.5, use 12)
 		}
 		return nil
 
@@ -931,6 +1010,36 @@ func (c *CPU) execSTOSW(_ Instruction) error {
 
 	// Update DI by 2 (assume DF=0, increment)
 	c.DI += 2
+
+	return nil
+}
+
+// LODSB - Load byte from DS:SI into AL
+func (c *CPU) execLODSB(_ Instruction) error {
+	// Read byte from DS:SI
+	srcAddr := CalculateLinearAddress(c.DS, c.SI)
+	value := c.Memory.ReadByteLinear(srcAddr)
+
+	// Store in AL
+	c.SetAL(value)
+
+	// Update SI (assume DF=0, increment)
+	c.SI++
+
+	return nil
+}
+
+// LODSW - Load word from DS:SI into AX
+func (c *CPU) execLODSW(_ Instruction) error {
+	// Read word from DS:SI
+	srcAddr := CalculateLinearAddress(c.DS, c.SI)
+	value := c.Memory.ReadWordLinear(srcAddr)
+
+	// Store in AX
+	c.AX = value
+
+	// Update SI by 2 (assume DF=0, increment)
+	c.SI += 2
 
 	return nil
 }

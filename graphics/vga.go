@@ -2,6 +2,7 @@ package graphics
 
 import (
 	"assembly-emulator/emulator"
+	"assembly-emulator/font"
 	"image/color"
 
 	"github.com/hajimehoshi/ebiten/v2"
@@ -117,6 +118,63 @@ func (v *VGADisplay) Draw(screen *ebiten.Image) {
 // SetPaletteColor sets a single palette entry
 func (v *VGADisplay) SetPaletteColor(index byte, r, g, b byte) {
 	v.palette[index] = color.RGBA{r, g, b, 255}
+}
+
+// DrawChar draws a single CP437 character at pixel coordinates (x, y)
+// char: CP437 character byte (0-255)
+// x, y: pixel coordinates (top-left corner)
+// color: palette index for foreground color
+// scale: scaling factor (1 = normal 8x16, 2 = 16x32, etc.)
+// Only foreground pixels are drawn (background is transparent)
+func (v *VGADisplay) DrawChar(char byte, x, y int, colorIndex byte, scale int) {
+	if scale < 1 {
+		scale = 1
+	}
+
+	glyph := font.CP437Font[char]
+
+	v.memory.LockVGA()
+	defer v.memory.UnlockVGA()
+
+	// Iterate through each row of the glyph
+	for row := 0; row < 16; row++ {
+		bits := glyph[row]
+
+		// Iterate through each pixel in the row (8 pixels)
+		for col := 0; col < 8; col++ {
+			// Check if bit is set (MSB is leftmost pixel)
+			if bits&(0x80>>col) != 0 {
+				// Draw scaled pixel
+				for sy := 0; sy < scale; sy++ {
+					for sx := 0; sx < scale; sx++ {
+						px := x + col*scale + sx
+						py := y + row*scale + sy
+
+						// Bounds check
+						if px >= 0 && px < ScreenWidth && py >= 0 && py < ScreenHeight {
+							v.memory.SetVGAPixel(px, py, colorIndex)
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+// GetCharWidth returns the width of a character in pixels for a given scale
+func (v *VGADisplay) GetCharWidth(scale int) int {
+	if scale < 1 {
+		scale = 1
+	}
+	return 8 * scale
+}
+
+// GetCharHeight returns the height of a character in pixels for a given scale
+func (v *VGADisplay) GetCharHeight(scale int) int {
+	if scale < 1 {
+		scale = 1
+	}
+	return 16 * scale
 }
 
 // Layout returns the screen dimensions
