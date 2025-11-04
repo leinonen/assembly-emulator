@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"sync"
+	"time"
 )
 
 func main() {
@@ -125,8 +126,15 @@ func main() {
 
 	fmt.Println("Running program...")
 
+	// Set start time for performance metrics
+	cpu.StartTime = time.Now().UnixNano()
+
 	// Run the program
 	err = cpu.Run()
+
+	// Calculate performance statistics
+	ips, totalInst, elapsed := cpu.GetPerformanceStats(time.Now().UnixNano())
+
 	if err != nil {
 		// Check if it's a stop signal (not a real error)
 		if err.Error() != "CPU stopped by external signal" {
@@ -138,6 +146,19 @@ func main() {
 	} else {
 		fmt.Println("Program halted.")
 		fmt.Printf("Final CPU state: %s\n", cpu.String())
+	}
+
+	// Print performance statistics
+	if elapsed > 0 {
+		fmt.Printf("\nPerformance Statistics:\n")
+		fmt.Printf("  Total instructions: %d\n", totalInst)
+		fmt.Printf("  Elapsed time: %.2f seconds\n", elapsed)
+		fmt.Printf("  Instructions/second: %.0f (%.2f MHz equivalent)\n", ips, ips/1_000_000)
+		if cpu.FrameCounter > 0 {
+			fmt.Printf("  Frames rendered: %d\n", cpu.FrameCounter)
+			fmt.Printf("  Average FPS: %.1f\n", float64(cpu.FrameCounter)/elapsed)
+			fmt.Printf("  Instructions/frame: %.0f\n", float64(totalInst)/float64(cpu.FrameCounter))
+		}
 	}
 
 	// If graphics was started, wait for it to close

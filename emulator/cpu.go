@@ -69,6 +69,10 @@ type CPU struct {
 
 	// Stop channel for external termination signal
 	stopChan chan struct{}
+
+	// Performance metrics
+	InstructionCount uint64 // Total instructions executed
+	StartTime        int64  // Unix nano timestamp when execution started
 }
 
 // Flags represents CPU flags
@@ -268,6 +272,20 @@ func flagStr(name string, set bool) string {
 		return name
 	}
 	return "-"
+}
+
+// GetPerformanceStats returns performance metrics
+func (c *CPU) GetPerformanceStats(currentTimeNano int64) (instructionsPerSec float64, totalInstructions uint64, elapsedSec float64) {
+	totalInstructions = c.InstructionCount
+	if c.StartTime == 0 {
+		return 0, totalInstructions, 0
+	}
+	elapsedNano := currentTimeNano - c.StartTime
+	elapsedSec = float64(elapsedNano) / 1e9
+	if elapsedSec > 0 {
+		instructionsPerSec = float64(totalInstructions) / elapsedSec
+	}
+	return instructionsPerSec, totalInstructions, elapsedSec
 }
 
 // OutByte handles OUT instruction - write byte to I/O port

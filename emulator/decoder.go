@@ -296,12 +296,15 @@ func (c *CPU) Step() error {
 		// REP repeats the string instruction CX times
 		switch inst.Opcode {
 		case OpMOVSB, OpMOVSW, OpSTOSB, OpSTOSW:
+			repCount := c.CX
 			for c.CX > 0 {
 				if err := c.Execute(inst); err != nil {
 					return fmt.Errorf("execution error at IP=0x%04X: %v", c.IP-uint16(inst.Size), err)
 				}
 				c.CX--
 			}
+			// Count REP iterations as separate instructions
+			c.InstructionCount += uint64(repCount)
 			return nil
 		default:
 			return fmt.Errorf("REP prefix not valid for opcode 0x%02X", inst.Opcode)
@@ -311,6 +314,9 @@ func (c *CPU) Step() error {
 	if err := c.Execute(inst); err != nil {
 		return fmt.Errorf("execution error at IP=0x%04X: %v", c.IP-uint16(inst.Size), err)
 	}
+
+	// Increment instruction counter
+	c.InstructionCount++
 
 	return nil
 }
