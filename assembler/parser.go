@@ -6,28 +6,62 @@ import (
 	"strings"
 )
 
+// SegmentType represents a memory segment type
+type SegmentType int
+
+const (
+	SegmentCode SegmentType = iota
+	SegmentData
+	SegmentStack
+)
+
+// LabelInfo stores information about a label
+type LabelInfo struct {
+	Segment SegmentType
+	Offset  uint16
+}
+
+// Program represents an assembled program with separate segments
+type Program struct {
+	CodeBytes []byte
+	DataBytes []byte
+	StackSize uint16
+}
+
 // Parser parses tokens into instructions
 type Parser struct {
 	tokens  []Token
 	pos     int
-	labels  map[string]uint16 // Label name -> address
-	program []byte            // Generated machine code
-	address uint16            // Current address
+	labels  map[string]LabelInfo // Label name -> segment and offset
+
+	// Separate segments
+	codeBytes []byte
+	dataBytes []byte
+	stackSize uint16
+
+	// Current segment and address tracking
+	currentSegment SegmentType
+	codeAddress    uint16
+	dataAddress    uint16
 }
 
 // NewParser creates a new parser
 func NewParser(tokens []Token) *Parser {
 	return &Parser{
-		tokens:  tokens,
-		pos:     0,
-		labels:  make(map[string]uint16),
-		program: make([]byte, 0),
-		address: 0,
+		tokens:         tokens,
+		pos:            0,
+		labels:         make(map[string]LabelInfo),
+		codeBytes:      make([]byte, 0),
+		dataBytes:      make([]byte, 0),
+		stackSize:      0x1000, // Default stack size of 4KB
+		currentSegment: SegmentCode, // Start in code segment
+		codeAddress:    0,
+		dataAddress:    0,
 	}
 }
 
 // Parse parses the tokens and generates machine code
-func (p *Parser) Parse() ([]byte, error) {
+func (p *Parser) Parse() (*Program, error) {
 	// First pass: collect labels
 	if err := p.firstPass(); err != nil {
 		return nil, err
@@ -35,15 +69,22 @@ func (p *Parser) Parse() ([]byte, error) {
 
 	// Reset for second pass
 	p.pos = 0
-	p.address = 0
-	p.program = make([]byte, 0)
+	p.codeAddress = 0
+	p.dataAddress = 0
+	p.codeBytes = make([]byte, 0)
+	p.dataBytes = make([]byte, 0)
+	p.currentSegment = SegmentCode // Reset to code segment
 
 	// Second pass: generate code
 	if err := p.secondPass(); err != nil {
 		return nil, err
 	}
 
-	return p.program, nil
+	return &Program{
+		CodeBytes: p.codeBytes,
+		DataBytes: p.dataBytes,
+		StackSize: p.stackSize,
+	}, nil
 }
 
 func (p *Parser) firstPass() error {
@@ -54,12 +95,18 @@ func (p *Parser) firstPass() error {
 		case TokenLabel:
 			// Check if next token is colon (label definition)
 			if p.peekType() == TokenColon {
-				p.labels[strings.ToUpper(token.Value)] = p.address
+				p.labels[strings.ToUpper(token.Value)] = LabelInfo{
+					Segment: p.currentSegment,
+					Offset:  p.getCurrentAddress(),
+				}
 				p.advance() // label
 				p.advance() // colon
 			} else if p.peekType() == TokenInstruction {
 				// Label on same line as instruction
-				p.labels[strings.ToUpper(token.Value)] = p.address
+				p.labels[strings.ToUpper(token.Value)] = LabelInfo{
+					Segment: p.currentSegment,
+					Offset:  p.getCurrentAddress(),
+				}
 				p.advance() // label
 			} else {
 				p.advance()
@@ -84,6 +131,28 @@ func (p *Parser) firstPass() error {
 	}
 
 	return nil
+}
+
+// getCurrentAddress returns the current address based on the active segment
+func (p *Parser) getCurrentAddress() uint16 {
+	switch p.currentSegment {
+	case SegmentCode:
+		return p.codeAddress
+	case SegmentData:
+		return p.dataAddress
+	default:
+		return 0
+	}
+}
+
+// incrementAddress increments the current segment's address
+func (p *Parser) incrementAddress(amount uint16) {
+	switch p.currentSegment {
+	case SegmentCode:
+		p.codeAddress += amount
+	case SegmentData:
+		p.dataAddress += amount
+	}
 }
 
 func (p *Parser) secondPass() error {
@@ -125,8 +194,16 @@ func (p *Parser) parseDirectiveSize() error {
 	p.advance()
 
 	switch directive {
-	case ".CODE", ".DATA", ".STACK":
-		// Section directives don't generate code
+	case ".CODE":
+		p.currentSegment = SegmentCode
+		return nil
+	case ".DATA":
+		p.currentSegment = SegmentData
+		return nil
+	case ".STACK":
+		p.currentSegment = SegmentStack
+		// Optionally parse stack size if provided
+		// For now, use default stack size
 		return nil
 
 	default:
@@ -139,8 +216,14 @@ func (p *Parser) parseDirective() error {
 	p.advance()
 
 	switch directive {
-	case ".CODE", ".DATA", ".STACK":
-		// Section directives
+	case ".CODE":
+		p.currentSegment = SegmentCode
+		return nil
+	case ".DATA":
+		p.currentSegment = SegmentData
+		return nil
+	case ".STACK":
+		p.currentSegment = SegmentStack
 		return nil
 
 	default:
@@ -186,7 +269,7 @@ func (p *Parser) parseInstructionSize() error {
 			}
 		}
 
-		p.address += totalBytes
+		p.incrementAddress(totalBytes)
 		return nil
 	}
 
@@ -213,7 +296,7 @@ func (p *Parser) parseInstructionSize() error {
 		size += operandSize
 	}
 
-	p.address += uint16(size)
+	p.incrementAddress(uint16(size))
 	return nil
 }
 
@@ -354,19 +437,34 @@ func (p *Parser) parseOperand() (Operand, error) {
 		}, nil
 
 	case TokenLabel:
-		// Label reference (for jumps)
+		// Label reference (for jumps or data access)
 		labelName := strings.ToUpper(token.Value)
 		p.advance()
 
-		addr, ok := p.labels[labelName]
+		labelInfo, ok := p.labels[labelName]
 		if !ok {
 			return Operand{}, fmt.Errorf("undefined label: %s", labelName)
 		}
 
+		// For now, we'll use the offset within the segment
+		// TODO: Handle cross-segment references (code accessing data labels)
+		// For data labels referenced from code, we'll need to calculate the linear address
+		addr := labelInfo.Offset
+
+		// If this is a data label referenced from code segment, calculate actual address
+		if p.currentSegment == SegmentCode && labelInfo.Segment == SegmentData {
+			// Data will be loaded after code, so calculate the actual linear address
+			// This will be: codeSize + dataOffset
+			// We'll need to fix this up later in a more sophisticated way
+			// For now, just use the offset - we'll handle this properly in the loader
+			addr = labelInfo.Offset
+		}
+
 		return Operand{
-			Type:      OperandTypeImmediate,
-			Immediate: addr,
-			IsLabel:   true, // Mark as label so it always uses 16-bit encoding
+			Type:         OperandTypeImmediate,
+			Immediate:    addr,
+			IsLabel:      true,          // Mark as label so it always uses 16-bit encoding
+			LabelSegment: labelInfo.Segment, // Store segment info for later use
 		}, nil
 
 	case TokenLeftBracket:
@@ -474,12 +572,13 @@ func (p *Parser) isAtEnd() bool {
 
 // Operand represents a parsed operand
 type Operand struct {
-	Type      OperandType
-	Reg       string
-	Immediate uint16
-	Address   uint16
-	Offset    uint16
-	IsLabel   bool // True if this immediate operand came from a label
+	Type         OperandType
+	Reg          string
+	Immediate    uint16
+	Address      uint16
+	Offset       uint16
+	IsLabel      bool        // True if this immediate operand came from a label
+	LabelSegment SegmentType // Segment the label belongs to (for cross-segment refs)
 }
 
 type OperandType int
@@ -589,14 +688,27 @@ func (p *Parser) generateInstruction(instr string, operands []Operand, hasREP bo
 }
 
 func (p *Parser) emit(b byte) {
-	p.program = append(p.program, b)
-	p.address++
+	switch p.currentSegment {
+	case SegmentCode:
+		p.codeBytes = append(p.codeBytes, b)
+		p.codeAddress++
+	case SegmentData:
+		p.dataBytes = append(p.dataBytes, b)
+		p.dataAddress++
+	}
 }
 
 func (p *Parser) emitWord(w uint16) {
-	p.program = append(p.program, byte(w&0xFF))
-	p.program = append(p.program, byte((w>>8)&0xFF))
-	p.address += 2
+	switch p.currentSegment {
+	case SegmentCode:
+		p.codeBytes = append(p.codeBytes, byte(w&0xFF))
+		p.codeBytes = append(p.codeBytes, byte((w>>8)&0xFF))
+		p.codeAddress += 2
+	case SegmentData:
+		p.dataBytes = append(p.dataBytes, byte(w&0xFF))
+		p.dataBytes = append(p.dataBytes, byte((w>>8)&0xFF))
+		p.dataAddress += 2
+	}
 }
 
 func (p *Parser) emitOperand(op Operand) {

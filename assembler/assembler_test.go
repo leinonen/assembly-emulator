@@ -93,24 +93,24 @@ HLT`
 	}
 
 	parser := NewParser(tokens)
-	bytecode, err := parser.Parse()
+	program, err := parser.Parse()
 	if err != nil {
 		t.Fatalf("Parser failed: %v", err)
 	}
 
 	// Should generate bytecode
-	if len(bytecode) == 0 {
+	if len(program.CodeBytes) == 0 {
 		t.Fatal("No bytecode generated")
 	}
 
 	// First byte should be OpMOV (0x01)
-	if bytecode[0] != 0x01 {
-		t.Errorf("Expected first byte to be 0x01 (MOV), got 0x%02X", bytecode[0])
+	if program.CodeBytes[0] != 0x01 {
+		t.Errorf("Expected first byte to be 0x01 (MOV), got 0x%02X", program.CodeBytes[0])
 	}
 
 	// Last byte should be OpHLT (0x52)
-	if bytecode[len(bytecode)-1] != 0x52 {
-		t.Errorf("Expected last byte to be 0x52 (HLT), got 0x%02X", bytecode[len(bytecode)-1])
+	if program.CodeBytes[len(program.CodeBytes)-1] != 0x52 {
+		t.Errorf("Expected last byte to be 0x52 (HLT), got 0x%02X", program.CodeBytes[len(program.CodeBytes)-1])
 	}
 }
 
@@ -129,10 +129,12 @@ start:
 	}
 
 	parser := NewParser(tokens)
-	bytecode, err := parser.Parse()
+	program, err := parser.Parse()
 	if err != nil {
 		t.Fatalf("Parser failed: %v", err)
 	}
+
+	bytecode := program.CodeBytes
 
 	// Debug: print bytecode
 	t.Logf("Bytecode (%d bytes): %X", len(bytecode), bytecode)
@@ -191,7 +193,7 @@ func TestRegisterSizes(t *testing.T) {
 			lexer := NewLexer(tt.source)
 			tokens, _ := lexer.Tokenize()
 			parser := NewParser(tokens)
-			bytecode, err := parser.Parse()
+			program, err := parser.Parse(); bytecode := program.CodeBytes
 			if err != nil {
 				t.Fatalf("Parser failed: %v", err)
 			}
@@ -251,7 +253,7 @@ func TestStringInstructions(t *testing.T) {
 			}
 
 			parser := NewParser(tokens)
-			bytecode, err := parser.Parse()
+			program, err := parser.Parse(); bytecode := program.CodeBytes
 			if err != nil {
 				t.Fatalf("Parser failed: %v", err)
 			}
@@ -291,7 +293,7 @@ func TestREPPrefix(t *testing.T) {
 			}
 
 			parser := NewParser(tokens)
-			bytecode, err := parser.Parse()
+			program, err := parser.Parse(); bytecode := program.CodeBytes
 			if err != nil {
 				t.Fatalf("Parser failed: %v", err)
 			}
@@ -333,7 +335,7 @@ HLT`
 	}
 
 	parser := NewParser(tokens)
-	bytecode, err := parser.Parse()
+	program, err := parser.Parse(); bytecode := program.CodeBytes
 	if err != nil {
 		t.Fatalf("Parser failed: %v", err)
 	}
@@ -370,7 +372,7 @@ HLT`
 	}
 
 	parser := NewParser(tokens)
-	bytecode, err := parser.Parse()
+	program, err := parser.Parse(); bytecode := program.CodeBytes
 	if err != nil {
 		t.Fatalf("Parser failed: %v", err)
 	}
@@ -410,7 +412,7 @@ HLT`
 	}
 
 	parser := NewParser(tokens)
-	bytecode, err := parser.Parse()
+	program, err := parser.Parse(); bytecode := program.CodeBytes
 	if err != nil {
 		t.Fatalf("Parser failed: %v", err)
 	}
@@ -447,7 +449,7 @@ HLT`
 	}
 
 	parser := NewParser(tokens)
-	bytecode, err := parser.Parse()
+	program, err := parser.Parse(); bytecode := program.CodeBytes
 	if err != nil {
 		t.Fatalf("Parser failed: %v", err)
 	}

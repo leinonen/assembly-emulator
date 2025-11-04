@@ -45,17 +45,41 @@ func main() {
 	}
 
 	parser := assembler.NewParser(tokens)
-	bytecode, err := parser.Parse()
+	program, err := parser.Parse()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Parser error: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("Assembly successful! Generated %d bytes of code.\n", len(bytecode))
+	fmt.Printf("Assembly successful! Generated %d bytes of code, %d bytes of data.\n",
+		len(program.CodeBytes), len(program.DataBytes))
 
-	// Create CPU and load program at linear address 0 (CS:0000 with CS=0)
+	// Create CPU
 	cpu := emulator.NewCPU()
-	cpu.Memory.LoadProgram(0, bytecode)
+
+	// Load code segment at address 0
+	codeBase := uint32(0)
+	cpu.Memory.LoadProgram(codeBase, program.CodeBytes)
+
+	// Load data segment after code (aligned to 16-byte paragraph boundary)
+	codeSize := uint32(len(program.CodeBytes))
+	dataBase := ((codeSize + 15) / 16) * 16 // Round up to next paragraph boundary
+	cpu.Memory.LoadProgram(dataBase, program.DataBytes)
+
+	// Set segment registers
+	cpu.CS = 0x0000 // Code starts at 0
+	if len(program.DataBytes) > 0 {
+		// Calculate data segment value: dataBase / 16 (convert linear address to segment)
+		cpu.DS = uint16(dataBase / 16)
+		cpu.ES = uint16(dataBase / 16)
+	}
+
+	// Stack segment: place after data
+	dataSize := uint32(len(program.DataBytes))
+	stackBase := dataBase + dataSize
+	stackBase = ((stackBase + 15) / 16) * 16 // Align to paragraph boundary
+	cpu.SS = uint16(stackBase / 16)
+	// SP is already initialized to 0xFFFE in NewCPU()
 
 	// Setup graphics initialization callback
 	var graphicsStarted bool

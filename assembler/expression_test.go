@@ -245,7 +245,7 @@ HLT`
 	}
 
 	parser := NewParser(tokens)
-	bytecode, err := parser.Parse()
+	program, err := parser.Parse(); bytecode := program.CodeBytes
 	if err != nil {
 		t.Fatalf("Parser failed: %v", err)
 	}

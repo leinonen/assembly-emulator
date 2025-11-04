@@ -1,8 +1,6 @@
 ; Classic Plasma - Simple and effective
 
-.code
-    JMP start
-
+.data
 sine_table:
     db 127, 130, 133, 136, 139, 143, 146, 149, 152, 155, 158, 161, 164, 167, 170, 173
     db 176, 179, 182, 184, 187, 190, 193, 195, 198, 200, 203, 205, 208, 210, 213, 215
@@ -21,6 +19,7 @@ sine_table:
     db 37, 39, 41, 44, 46, 49, 51, 54, 56, 59, 61, 64, 67, 70, 72, 75
     db 78, 81, 84, 87, 90, 93, 96, 99, 102, 105, 108, 111, 115, 118, 121, 124
 
+.code
 start:
     mov ax, 0x13
     int 0x10
@@ -32,49 +31,34 @@ start:
     mov dx, 0x3C9
     xor cx, cx
 pal:
-    push ds
-    push cs
-    pop ds
-
     ; Red component: sin(i)
-    mov si, cx
-    and si, 0xFF        ; mask to 0-255 first
-    add si, 4           ; offset to sine_table
-    cmp si, 260
-    jl pal_red_ok
-    sub si, 256
-pal_red_ok:
+    mov si, sine_table
+    mov ax, cx
+    and ax, 0xFF        ; mask to 0-255
+    add si, ax
     mov al, [si]
     shr al, 2           ; scale to 0-63
     out dx, al
 
     ; Green component: sin(i + 85)
-    mov si, cx
-    add si, 85
-    and si, 0xFF
-    add si, 4
-    cmp si, 260
-    jl pal_green_ok
-    sub si, 256
-pal_green_ok:
+    mov si, sine_table
+    mov ax, cx
+    add ax, 85
+    and ax, 0xFF
+    add si, ax
     mov al, [si]
     shr al, 2
     out dx, al
 
     ; Blue component: sin(i + 170)
-    mov si, cx
-    add si, 170
-    and si, 0xFF
-    add si, 4
-    cmp si, 260
-    jl pal_blue_ok
-    sub si, 256
-pal_blue_ok:
+    mov si, sine_table
+    mov ax, cx
+    add ax, 170
+    and ax, 0xFF
+    add si, ax
     mov al, [si]
     shr al, 2
     out dx, al
-
-    pop ds
 
     inc cx
     cmp cx, 256
@@ -84,6 +68,7 @@ pal_blue_ok:
 
 main_loop:
     ; Render to backbuffer at 0x7000:0
+    push ds                 ; Save data segment (for sine table access later)
     mov ax, 0x7000
     mov es, ax
     xor di, di
@@ -93,10 +78,6 @@ y_loop:
     xor cx, cx
 
 x_loop:
-    push ds
-    push cs
-    pop ds
-
     ; Wave 1: sin(x + x/2 + time*2)
     mov ax, cx
     mov dx, ax
@@ -105,13 +86,9 @@ x_loop:
     mov dx, bp
     add dx, bp          ; time * 2 in DX
     add ax, dx
-    and ax, 0xFF        ; Mask first to get 0-255
-    add ax, 4           ; Then add offset to get 4-259, but we need to wrap!
-    cmp ax, 260         ; If >= 260 (beyond sine table)
-    jl wave1_ok
-    sub ax, 256         ; Wrap: subtract 256 to get back to 4-7
-wave1_ok:
-    mov si, ax
+    and ax, 0xFF        ; Mask to get 0-255
+    mov si, sine_table
+    add si, ax
     mov al, [si]
     mov dh, al
 
@@ -128,13 +105,9 @@ wave1_ok:
     add dx, bp          ; time * 3 in DX
     add ax, dx
     pop dx
-    and ax, 0xFF        ; Mask first to get 0-255
-    add ax, 4           ; Then add offset
-    cmp ax, 260
-    jl wave2_ok
-    sub ax, 256
-wave2_ok:
-    mov si, ax
+    and ax, 0xFF        ; Mask to get 0-255
+    mov si, sine_table
+    add si, ax
     mov al, [si]
     add dh, al
 
@@ -142,19 +115,13 @@ wave2_ok:
     mov ax, cx
     add ax, bx
     add ax, bp
-    and ax, 0xFF        ; Mask first to get 0-255
-    add ax, 4           ; Then add offset
-    cmp ax, 260
-    jl wave3_ok
-    sub ax, 256
-wave3_ok:
-    mov si, ax
+    and ax, 0xFF        ; Mask to get 0-255
+    mov si, sine_table
+    add si, ax
     mov al, [si]
 
     ; Combine waves using addition (classic plasma effect)
     add al, dh
-
-    pop ds
 
     ; mov [di], al
     ; inc di
@@ -191,6 +158,7 @@ wave3_ok:
     mov ds, ax
     mov ah, 0x01
     int 0x16
+    pop ds                  ; Restore data segment for next iteration
     jz main_loop
 
     mov ah, 0x00

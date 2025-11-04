@@ -2,9 +2,7 @@
 ; This program demonstrates text rendering with CP437 characters
 ; including box-drawing characters
 
-.code
-    JMP start
-
+.data
 ; Demo text using CP437 box-drawing chars (now with readable string literals!)
 msg:
     db "Mode 13h CP437 demo:", 13, 10
@@ -12,6 +10,7 @@ msg:
     db "║ Hello world! ║", 13, 10
     db "╚══════════════╝", 0
 
+.code
 start:
     ; Switch to 320x200x256 (mode 13h)
     mov ax, 0x13

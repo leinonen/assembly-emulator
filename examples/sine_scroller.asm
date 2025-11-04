@@ -2,31 +2,31 @@
 ; Text scrolling along a sine wave with actual character rendering
 ; Uses CP437 font data for readable text
 
-.code
-    JMP start
-
+.data
 ; Sine lookup table (256 entries, values 0-255)
-sine_table: db 127, 130, 133, 136, 139, 143, 146, 149, 152, 155, 158, 161, 164, 167, 170, 173,
-           db 176, 179, 182, 184, 187, 190, 193, 195, 198, 200, 203, 205, 208, 210, 213, 215,
-           db 217, 219, 221, 224, 226, 228, 229, 231, 233, 235, 236, 238, 239, 241, 242, 244,
-           db 245, 246, 247, 248, 249, 250, 251, 251, 252, 253, 253, 254, 254, 254, 254, 254,
-           db 255, 254, 254, 254, 254, 254, 253, 253, 252, 251, 251, 250, 249, 248, 247, 246,
-           db 245, 244, 242, 241, 239, 238, 236, 235, 233, 231, 229, 228, 226, 224, 221, 219,
-           db 217, 215, 213, 210, 208, 205, 203, 200, 198, 195, 193, 190, 187, 184, 182, 179,
-           db 176, 173, 170, 167, 164, 161, 158, 155, 152, 149, 146, 143, 139, 136, 133, 130,
-           db 127, 124, 121, 118, 115, 111, 108, 105, 102, 99, 96, 93, 90, 87, 84, 81,
-           db 78, 75, 72, 70, 67, 64, 61, 59, 56, 54, 51, 49, 46, 44, 41, 39,
-           db 37, 35, 33, 30, 28, 26, 25, 23, 21, 19, 18, 16, 15, 13, 12, 10,
-           db 9, 8, 7, 6, 5, 4, 3, 3, 2, 1, 1, 0, 0, 0, 0, 0,
-           db 0, 0, 0, 0, 0, 0, 1, 1, 2, 3, 3, 4, 5, 6, 7, 8,
-           db 9, 10, 12, 13, 15, 16, 18, 19, 21, 23, 25, 26, 28, 30, 33, 35,
-           db 37, 39, 41, 44, 46, 49, 51, 54, 56, 59, 61, 64, 67, 70, 72, 75,
-           db 78, 81, 84, 87, 90, 93, 96, 99, 102, 105, 108, 111, 115, 118, 121, 124
+sine_table: 
+    db 127, 130, 133, 136, 139, 143, 146, 149, 152, 155, 158, 161, 164, 167, 170, 173,
+    db 176, 179, 182, 184, 187, 190, 193, 195, 198, 200, 203, 205, 208, 210, 213, 215,
+    db 217, 219, 221, 224, 226, 228, 229, 231, 233, 235, 236, 238, 239, 241, 242, 244,
+    db 245, 246, 247, 248, 249, 250, 251, 251, 252, 253, 253, 254, 254, 254, 254, 254,
+    db 255, 254, 254, 254, 254, 254, 253, 253, 252, 251, 251, 250, 249, 248, 247, 246,
+    db 245, 244, 242, 241, 239, 238, 236, 235, 233, 231, 229, 228, 226, 224, 221, 219,
+    db 217, 215, 213, 210, 208, 205, 203, 200, 198, 195, 193, 190, 187, 184, 182, 179,
+    db 176, 173, 170, 167, 164, 161, 158, 155, 152, 149, 146, 143, 139, 136, 133, 130,
+    db 127, 124, 121, 118, 115, 111, 108, 105, 102, 99, 96, 93, 90, 87, 84, 81,
+    db 78, 75, 72, 70, 67, 64, 61, 59, 56, 54, 51, 49, 46, 44, 41, 39,
+    db 37, 35, 33, 30, 28, 26, 25, 23, 21, 19, 18, 16, 15, 13, 12, 10,
+    db 9, 8, 7, 6, 5, 4, 3, 3, 2, 1, 1, 0, 0, 0, 0, 0,
+    db 0, 0, 0, 0, 0, 0, 1, 1, 2, 3, 3, 4, 5, 6, 7, 8,
+    db 9, 10, 12, 13, 15, 16, 18, 19, 21, 23, 25, 26, 28, 30, 33, 35,
+    db 37, 39, 41, 44, 46, 49, 51, 54, 56, 59, 61, 64, 67, 70, 72, 75,
+    db 78, 81, 84, 87, 90, 93, 96, 99, 102, 105, 108, 111, 115, 118, 121, 124
 
 ; Scroll message
 scroll_msg:
     db "  HELLO WORLD!  THIS IS A SINE SCROLLER...  SCROLLING TEXT ON A WAVE...  USING BIOS ROM FONT! ", 0
 
+.code
 ; BIOS font is at F000:A000 (linear address 0xFA000)
 FONT_SEG equ 0xF000
 FONT_OFF equ 0xA000
@@ -36,6 +36,17 @@ FONT_OFF equ 0xA000
 SCROLL_RESET equ 0xFC00
 
 start:
+    ; Save data segment at fixed location (segment 0, offset 0xFFFE)
+    ; so we can always access it regardless of current segment
+    push ds
+    xor ax, ax
+    mov ds, ax
+    mov si, 0xFFFE
+    pop ax
+    mov [si], ax
+    ; Restore DS to data segment
+    mov ds, ax
+
     ; Switch to VGA mode 13h
     mov ax, 0x13
     int 0x10
@@ -57,6 +68,7 @@ start:
     xor di, di
 
 main_loop:
+    push ds                 ; Save data segment for later restoration
     ; Clear back buffer (blue background)
     push es
     mov ax, 0x7000
@@ -156,17 +168,25 @@ char_pixel_loop:
     add ax, di              ; Add wave_time (stored in DI)
     and ax, 0xFF            ; Wrap to 0-255
 
-    ; Look up sine value (sine_table is in segment 0, not BIOS ROM!)
-    push ds
-    push ax
-    xor ax, ax
-    mov ds, ax              ; Restore DS to segment 0 temporarily
-    pop ax
+    ; Look up sine value (sine_table is in data segment, not BIOS ROM!)
+    push ds                 ; Save FONT_SEG
+    push bx
+    push si
 
+    ; Get data segment from fixed location (segment 0, offset 0xFFFE)
+    xor bx, bx
+    mov ds, bx              ; DS = 0
+    mov si, 0xFFFE
+    mov bx, [si]            ; BX = saved data segment value
+    mov ds, bx              ; DS now points to data segment
+
+    ; Access sine_table
     mov si, sine_table
     add si, ax
-    mov al, [si]            ; AL = sine value (0-255) from segment 0
+    mov al, [si]            ; AL = sine value (0-255) from data segment
 
+    pop si                  ; Restore SI
+    pop bx
     pop ds                  ; Restore DS to BIOS ROM segment
 
     ; Calculate Y = 84 + ((sine - 128) * 40 / 128)
@@ -297,13 +317,14 @@ no_reset:
     pop es
     pop ds
 
-    ; Restore ES to back buffer for next frame (DS stays at code segment)
+    ; Restore ES to back buffer for next frame (DS restored at start of main_loop)
     mov ax, 0x7000
     mov es, ax
 
     ; Check for key press
     mov ah, 0x01
     int 0x16
+    pop ds                  ; Restore data segment for next iteration
     jz main_loop
 
     ; Exit
