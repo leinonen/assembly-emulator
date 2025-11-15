@@ -14,13 +14,56 @@ make test                         # Test
 
 Press **ESC** or close window to exit.
 
+## Gallery
+
+<table>
+  <tr>
+    <td align="center">
+      <img src="examples/gifs/fire.gif" width="320" alt="Fire Effect"/><br/>
+      <b>Fire Effect</b><br/>
+      <code>examples/fire.asm</code>
+    </td>
+    <td align="center">
+      <img src="examples/gifs/plasma.gif" width="320" alt="Plasma"/><br/>
+      <b>Plasma</b><br/>
+      <code>examples/plasma.asm</code>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+      <img src="examples/gifs/starfield.gif" width="320" alt="Starfield"/><br/>
+      <b>3D Starfield</b><br/>
+      <code>examples/starfield.asm</code>
+    </td>
+    <td align="center">
+      <img src="examples/gifs/sine_scroller.gif" width="320" alt="Sine Scroller"/><br/>
+      <b>Sine Scroller</b><br/>
+      <code>examples/sine_scroller.asm</code>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+      <img src="examples/gifs/bouncing-line.gif" width="320" alt="Bouncing Line"/><br/>
+      <b>Bouncing Line</b><br/>
+      <code>examples/bouncing-line.asm</code>
+    </td>
+    <td></td>
+  </tr>
+</table>
+
 ## Usage
 
 ```bash
-./asm-emu <file.asm>
+./asm-emu <file.asm>                           # Run with graphics window
+./asm-emu --gif output.gif <file.asm>          # Record to animated GIF
+./asm-emu --gif output.gif --gif-frames 60     # Shorter GIF (2 seconds)
 ```
 
-**Examples:** 
+**Options:**
+- `--gif <file>` - Record output to animated GIF file (headless mode)
+- `--gif-frames <n>` - Number of frames to capture (default: 90 = 3 seconds at 30fps)
+
+**Examples:**
 - `pixels.asm` (colored pixels)
 - `bars.asm` (color bars)
 - `noise.asm` (random pattern with looping until ESC pressed)

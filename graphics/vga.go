@@ -3,7 +3,12 @@ package graphics
 import (
 	"assembly-emulator/emulator"
 	"assembly-emulator/font"
+	"fmt"
+	"image"
 	"image/color"
+	"image/gif"
+	"os"
+	"time"
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
@@ -286,4 +291,88 @@ func RunGraphicsWithDisplay(display *VGADisplay, cpu interface{ SetVBlank(bool) 
 		keyPressCallback: keyCallback,
 	}
 	return ebiten.RunGame(game)
+}
+
+// RecordGIF records frames to an animated GIF file (headless mode)
+func RecordGIF(display *VGADisplay, cpu interface{ SetVBlank(bool) }, outputPath string, maxFrames int) error {
+	frames := make([]*image.Paletted, 0, maxFrames)
+	delays := make([]int, 0, maxFrames)
+
+	// Start time
+	startTime := time.Now()
+	frameCount := 0
+	capturedFrames := 0
+
+	// Capture loop - run headless
+	for capturedFrames < maxFrames {
+		// Signal VBlank at the start of each frame (60 FPS)
+		if cpu != nil {
+			cpu.SetVBlank(true)
+		}
+
+		// Update display from VGA memory
+		if err := display.Update(); err != nil {
+			return err
+		}
+
+		// Capture every other frame to get 30fps output
+		if frameCount%2 == 0 {
+			// Create paletted image with VGA palette
+			palette := make(color.Palette, 256)
+			for i := 0; i < 256; i++ {
+				palette[i] = display.palette[i]
+			}
+
+			// Create paletted image
+			img := image.NewPaletted(image.Rect(0, 0, ScreenWidth, ScreenHeight), palette)
+
+			// Copy VGA memory to image
+			display.memory.LockVGA()
+			vgaMem := display.memory.GetVGAMemory()
+			for y := 0; y < ScreenHeight; y++ {
+				for x := 0; x < ScreenWidth; x++ {
+					offset := y*ScreenWidth + x
+					img.SetColorIndex(x, y, vgaMem[offset])
+				}
+			}
+			display.memory.UnlockVGA()
+
+			frames = append(frames, img)
+			delays = append(delays, 3) // 3/100 second = 30fps (approximately)
+
+			capturedFrames++
+			if capturedFrames%30 == 0 {
+				fmt.Printf("Captured %d/%d frames...\n", capturedFrames, maxFrames)
+			}
+		}
+
+		frameCount++
+
+		// Small delay to simulate ~60fps timing
+		time.Sleep(16 * time.Millisecond)
+	}
+
+	elapsed := time.Since(startTime)
+	fmt.Printf("Captured %d frames in %.2f seconds\n", capturedFrames, elapsed.Seconds())
+
+	// Encode to GIF
+	fmt.Printf("Encoding GIF to %s...\n", outputPath)
+	file, err := os.Create(outputPath)
+	if err != nil {
+		return fmt.Errorf("failed to create GIF file: %w", err)
+	}
+	defer file.Close()
+
+	err = gif.EncodeAll(file, &gif.GIF{
+		Image: frames,
+		Delay: delays,
+		// Loop forever
+		LoopCount: 0,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to encode GIF: %w", err)
+	}
+
+	fmt.Printf("GIF saved successfully!\n")
+	return nil
 }

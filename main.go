@@ -4,6 +4,7 @@ import (
 	"assembly-emulator/assembler"
 	"assembly-emulator/emulator"
 	"assembly-emulator/graphics"
+	"flag"
 	"fmt"
 	"os"
 	"sync"
@@ -11,14 +12,21 @@ import (
 )
 
 func main() {
-	// Check for command-line arguments
-	if len(os.Args) < 2 {
-		fmt.Fprintf(os.Stderr, "Usage: %s <assembly-file.asm>\n", os.Args[0])
+	// Define command-line flags
+	gifOutput := flag.String("gif", "", "Output GIF file (enables headless recording mode)")
+	gifFrames := flag.Int("gif-frames", 90, "Number of frames to capture for GIF (default: 90 = 3 seconds at 30fps)")
+	flag.Parse()
+
+	// Check for assembly file argument
+	if flag.NArg() < 1 {
+		fmt.Fprintf(os.Stderr, "Usage: %s [options] <assembly-file.asm>\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "Example: %s examples/noise.asm\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "\nOptions:\n")
+		flag.PrintDefaults()
 		os.Exit(1)
 	}
 
-	asmFile := os.Args[1]
+	asmFile := flag.Arg(0)
 
 	// Read assembly file
 	source, err := os.ReadFile(asmFile)
@@ -105,12 +113,22 @@ func main() {
 
 			// Run graphics in goroutine
 			go func() {
-				if err := graphics.RunGraphicsWithDisplay(vgaDisplay, cpu, keyCallback); err != nil {
-					fmt.Fprintf(os.Stderr, "Graphics error: %v\n", err)
+				// Check if GIF recording mode is enabled
+				if *gifOutput != "" {
+					fmt.Printf("Recording %d frames to %s...\n", *gifFrames, *gifOutput)
+					if err := graphics.RecordGIF(vgaDisplay, cpu, *gifOutput, *gifFrames); err != nil {
+						fmt.Fprintf(os.Stderr, "GIF recording error: %v\n", err)
+					}
+					close(graphicsDone)
+					cpu.Stop()
+				} else {
+					if err := graphics.RunGraphicsWithDisplay(vgaDisplay, cpu, keyCallback); err != nil {
+						fmt.Fprintf(os.Stderr, "Graphics error: %v\n", err)
+					}
+					close(graphicsDone)
+					// Signal CPU to stop when graphics window closes
+					cpu.Stop()
 				}
-				close(graphicsDone)
-				// Signal CPU to stop when graphics window closes
-				cpu.Stop()
 			}()
 		}
 	}
