@@ -25,9 +25,9 @@ set_gray_loop:
     INC BL
     JNZ set_gray_loop  ; Loop while BL != 0 (will wrap from 255 to 0)
 
-; Set DS to VGA segment
+; Set ES to VGA segment
 MOV AX, 0xA000
-MOV DS, AX
+MOV ES, AX
 
 ; Draw horizontal gradient bars
 MOV DI, 0        ; DI = row counter
@@ -47,7 +47,7 @@ draw_row_loop:
     pixel_loop:
         MOV AL, BL
         MOV BX, SI
-        MOV [BX], AL
+        MOV [ES:BX], AL
         INC SI
         LOOP pixel_loop
 

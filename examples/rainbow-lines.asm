@@ -21,7 +21,7 @@ draw_row:
     MOV AL, BL          ; Use current color
 
 draw_pixel:
-    MOV [DI], AL        ; Write pixel to ES:DI
+    MOV [ES:DI], AL        ; Write pixel to ES:DI
     INC DI              ; Move to next pixel
     LOOP draw_pixel
 

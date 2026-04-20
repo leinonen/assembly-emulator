@@ -65,7 +65,7 @@ MOV BL, 1
 MOV CX, 16000
 fill1:
     MOV AL, BL
-    MOV [DI], AL
+    MOV [ES:DI], AL
     INC DI
     LOOP fill1
 
@@ -74,7 +74,7 @@ MOV BL, 2
 MOV CX, 16000
 fill2:
     MOV AL, BL
-    MOV [DI], AL
+    MOV [ES:DI], AL
     INC DI
     LOOP fill2
 
@@ -83,7 +83,7 @@ MOV BL, 3
 MOV CX, 16000
 fill3:
     MOV AL, BL
-    MOV [DI], AL
+    MOV [ES:DI], AL
     INC DI
     LOOP fill3
 
@@ -92,7 +92,7 @@ MOV BL, 4
 MOV CX, 16000
 fill4:
     MOV AL, BL
-    MOV [DI], AL
+    MOV [ES:DI], AL
     INC DI
     LOOP fill4
 

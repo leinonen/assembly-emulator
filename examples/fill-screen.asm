@@ -12,12 +12,7 @@
     XOR DI, DI          ; Start at offset 0
     MOV CX, 32000       ; 32000 words = 64000 bytes
     MOV AX, 0x0F0F      ; Color 15 (white) in both bytes
-
-fill_loop:
-    MOV [DI], AX        ; Write word to ES:DI
-    INC DI
-    INC DI              ; Move to next word
-    LOOP fill_loop
+    REP STOSW            ; Fill screen
 
     ; Busy-wait for keypress
 wait_loop:

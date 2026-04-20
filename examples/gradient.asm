@@ -42,7 +42,7 @@ row_loop:
     MOV CX, 320
 
 fill_row:
-    MOV [DI], AL
+    MOV [ES:DI], AL
     INC DI
     LOOP fill_row
 

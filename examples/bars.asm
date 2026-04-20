@@ -6,9 +6,9 @@
     MOV AX, 13h
     INT 10h
 
-    ; Set DS to VGA segment
+    ; Set ES to VGA segment
     MOV AX, 0xA000
-    MOV DS, AX
+    MOV ES, AX
 
     ; Draw 16 vertical bars (20 pixels wide each = 320 total)
     XOR DI, DI         ; Row counter (0-199)
@@ -29,7 +29,7 @@ bar_loop:
     pixel_loop:
         MOV BX, SI      ; BX = offset
         MOV AL, DL      ; AL = color
-        MOV [BX], AL    ; Write pixel
+        MOV [ES:BX], AL ; Write pixel
         INC SI          ; Next pixel
         LOOP pixel_loop
 

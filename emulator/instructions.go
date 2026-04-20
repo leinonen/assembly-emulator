@@ -82,13 +82,14 @@ const (
 type OperandType byte
 
 const (
-	OpTypeNone     OperandType = 0
-	OpTypeReg16    OperandType = 1 // 16-bit register
-	OpTypeReg8     OperandType = 2 // 8-bit register
-	OpTypeImm16    OperandType = 3 // 16-bit immediate
-	OpTypeImm8     OperandType = 4 // 8-bit immediate
-	OpTypeMem      OperandType = 5 // Memory address
-	OpTypeMemReg   OperandType = 6 // Memory [register]
+	OpTypeNone       OperandType = 0
+	OpTypeReg16      OperandType = 1 // 16-bit register
+	OpTypeReg8       OperandType = 2 // 8-bit register
+	OpTypeImm16      OperandType = 3 // 16-bit immediate
+	OpTypeImm8       OperandType = 4 // 8-bit immediate
+	OpTypeMem        OperandType = 5 // Memory address
+	OpTypeMemReg     OperandType = 6 // Memory [register]
+	OpTypeMemSegReg  OperandType = 7 // Memory [segment:register+offset]
 )
 
 // Instruction represents a decoded instruction
@@ -134,6 +135,10 @@ func (c *CPU) Execute(inst Instruction) error {
 		return c.execMUL(inst)
 	case OpDIV:
 		return c.execDIV(inst)
+	case OpIDIV:
+		return c.execIDIV(inst)
+	case OpIMUL:
+		return c.execIMUL(inst)
 	case OpINC:
 		return c.execINC(inst)
 	case OpDEC:
@@ -155,6 +160,10 @@ func (c *CPU) Execute(inst Instruction) error {
 		return c.execSHR(inst)
 	case OpSAR:
 		return c.execSAR(inst)
+	case OpROL:
+		return c.execROL(inst)
+	case OpROR:
+		return c.execROR(inst)
 
 	case OpCMP:
 		return c.execCMP(inst)
@@ -228,8 +237,9 @@ func (c *CPU) Execute(inst Instruction) error {
 // MOV instruction
 func (c *CPU) execMOV(inst Instruction) error {
 	// Special handling for 8-bit memory reads (e.g., MOV AL, [SI])
-	if (inst.Src.Type == OpTypeMem || inst.Src.Type == OpTypeMemReg) &&
-		(inst.Dest.Type == OpTypeReg8) {
+	isSrcMem := inst.Src.Type == OpTypeMem || inst.Src.Type == OpTypeMemReg || inst.Src.Type == OpTypeMemSegReg
+	isDestMem := inst.Dest.Type == OpTypeMem || inst.Dest.Type == OpTypeMemReg || inst.Dest.Type == OpTypeMemSegReg
+	if isSrcMem && inst.Dest.Type == OpTypeReg8 {
 		addr := CalculateLinearAddress(inst.Src.MemSegment, inst.Src.MemAddr)
 		val := c.Memory.ReadByteLinear(addr)
 		c.setOperandValue(inst.Dest, uint16(val))
@@ -237,8 +247,7 @@ func (c *CPU) execMOV(inst Instruction) error {
 	}
 
 	// Special handling for 8-bit memory writes (e.g., MOV [DI], AL)
-	if (inst.Src.Type == OpTypeReg8 || inst.Src.Type == OpTypeImm8) &&
-		(inst.Dest.Type == OpTypeMem || inst.Dest.Type == OpTypeMemReg) {
+	if (inst.Src.Type == OpTypeReg8 || inst.Src.Type == OpTypeImm8) && isDestMem {
 		addr := CalculateLinearAddress(inst.Dest.MemSegment, inst.Dest.MemAddr)
 		val := c.getOperandValue(inst.Src)
 		c.Memory.WriteByteLinear(addr, uint8(val&0xFF))
@@ -339,6 +348,22 @@ func (c *CPU) execDIV(inst Instruction) error {
 	c.AX = uint16(quotient)
 	c.DX = uint16(remainder)
 
+	return nil
+}
+
+// IMUL instruction (signed multiply): DX:AX = AX * src (signed)
+func (c *CPU) execIMUL(inst Instruction) error {
+	src := int16(c.getOperandValue(inst.Dest))
+	result := int32(int16(c.AX)) * int32(src)
+	c.AX = uint16(result & 0xFFFF)
+	c.DX = uint16((result >> 16) & 0xFFFF)
+	signBit := (c.AX & 0x8000) != 0
+	expected := uint16(0)
+	if signBit {
+		expected = 0xFFFF
+	}
+	c.Flags.CF = c.DX != expected
+	c.Flags.OF = c.Flags.CF
 	return nil
 }
 
@@ -492,6 +517,55 @@ func (c *CPU) execSAR(inst Instruction) error {
 		c.setOperandValue(inst.Dest, result)
 	}
 
+	return nil
+}
+
+// ROL instruction (rotate left)
+func (c *CPU) execROL(inst Instruction) error {
+	val := c.getOperandValue(inst.Dest)
+	count := c.getOperandValue(inst.Src) % 16
+	if count == 0 {
+		return nil
+	}
+	result := (val << count) | (val >> (16 - count))
+	c.Flags.CF = (result & 1) != 0
+	if count == 1 {
+		c.Flags.OF = c.Flags.CF != ((result & 0x8000) != 0)
+	}
+	c.setOperandValue(inst.Dest, result)
+	return nil
+}
+
+// ROR instruction (rotate right)
+func (c *CPU) execROR(inst Instruction) error {
+	val := c.getOperandValue(inst.Dest)
+	count := c.getOperandValue(inst.Src) % 16
+	if count == 0 {
+		return nil
+	}
+	result := (val >> count) | (val << (16 - count))
+	c.Flags.CF = (result & 0x8000) != 0
+	if count == 1 {
+		c.Flags.OF = (result&0x8000 != 0) != (result&0x4000 != 0)
+	}
+	c.setOperandValue(inst.Dest, result)
+	return nil
+}
+
+// IDIV instruction (signed divide): AX = DX:AX / src, DX = remainder
+func (c *CPU) execIDIV(inst Instruction) error {
+	divisor := int32(int16(c.getOperandValue(inst.Dest)))
+	if divisor == 0 {
+		return fmt.Errorf("division by zero")
+	}
+	dividend := (int32(int16(c.DX)) << 16) | int32(c.AX)
+	quotient := dividend / divisor
+	remainder := dividend % divisor
+	if quotient > 0x7FFF || quotient < -0x8000 {
+		return fmt.Errorf("division overflow")
+	}
+	c.AX = uint16(int16(quotient))
+	c.DX = uint16(int16(remainder))
 	return nil
 }
 
@@ -860,7 +934,7 @@ func (c *CPU) getOperandValue(op Operand) uint16 {
 		return op.Imm16
 	case OpTypeImm8:
 		return uint16(op.Imm8)
-	case OpTypeMem, OpTypeMemReg:
+	case OpTypeMem, OpTypeMemReg, OpTypeMemSegReg:
 		// Use segmented addressing
 		addr := CalculateLinearAddress(op.MemSegment, op.MemAddr)
 		return c.Memory.ReadWordLinear(addr)
@@ -879,7 +953,7 @@ func (c *CPU) setOperandValue(op Operand, val uint16) {
 		if op.Reg8Set != nil {
 			op.Reg8Set(uint8(val & 0xFF))
 		}
-	case OpTypeMem, OpTypeMemReg:
+	case OpTypeMem, OpTypeMemReg, OpTypeMemSegReg:
 		// Use segmented addressing
 		addr := CalculateLinearAddress(op.MemSegment, op.MemAddr)
 		c.Memory.WriteWordLinear(addr, val)

@@ -135,6 +135,35 @@ func (c *CPU) decodeOperand() (Operand, int, error) {
 		op.MemSegment = seg
 		op.SegOverride = false
 
+	case OpTypeMemSegReg:
+		// Encoding: [segRegCode:1][regCode:1][offset:2]
+		addr = CalculateLinearAddress(c.CS, c.IP)
+		segRegCode := c.Memory.ReadByteLinear(addr)
+		c.IP++
+		size++
+
+		addr = CalculateLinearAddress(c.CS, c.IP)
+		regCode := c.Memory.ReadByteLinear(addr)
+		c.IP++
+		size++
+
+		addr = CalculateLinearAddress(c.CS, c.IP)
+		offset := c.Memory.ReadWordLinear(addr)
+		c.IP += 2
+		size += 2
+
+		segPtr, err := c.decodeRegister16(segRegCode)
+		if err != nil {
+			return op, size, err
+		}
+		effectiveOffset, _, err := c.calculateMemRegAddress(regCode, offset)
+		if err != nil {
+			return op, size, err
+		}
+		op.MemAddr = effectiveOffset
+		op.MemSegment = *segPtr
+		op.SegOverride = true
+
 	default:
 		return op, size, fmt.Errorf("unknown operand type: 0x%02X", opType)
 	}
@@ -295,7 +324,7 @@ func (c *CPU) Step() error {
 	if inst.HasREP {
 		// REP repeats the string instruction CX times
 		switch inst.Opcode {
-		case OpMOVSB, OpMOVSW, OpSTOSB, OpSTOSW:
+		case OpMOVSB, OpMOVSW, OpSTOSB, OpSTOSW, OpLODSB, OpLODSW:
 			repCount := c.CX
 			for c.CX > 0 {
 				if err := c.Execute(inst); err != nil {

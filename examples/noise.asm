@@ -83,7 +83,7 @@ pixel_loop:
     AND AL, 0xFF
 
     ; Write single pixel to back buffer (DS:DI)
-    MOV [DI], AL
+    MOV [ES:DI], AL
     INC DI
 
     LOOP pixel_loop

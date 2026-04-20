@@ -80,13 +80,15 @@ Press **ESC** or close window to exit.
 
     XOR DI, DI         ; DI = 0 (offset)
     MOV AL, 4          ; Red color
-    MOV [DI], AL       ; Write pixel to ES:DI (VGA memory)
+    MOV [ES:DI], AL    ; Write pixel to ES:DI (VGA memory)
     HLT
 ```
 
 **Number formats:** `100` (decimal), `0x64` / `64h` (hex), `0A000h` (hex with letter)
 
 **Memory:** `[BX]`, `[SI]`, `[DI+10]` - supports both byte and word operations
+
+**Segment override:** `[ES:DI]`, `[DS:BX+4]` - explicit segment register prefix
 
 **Segments:** CS, DS, ES, SS - full x86 real mode segment support
 
@@ -166,6 +168,7 @@ exit_program:
 **Logical:** AND, OR, XOR, NOT, SHL, SHR, SAL, SAR, ROL, ROR
 **Control:** CMP, TEST, JMP, JE/JZ, JNE/JNZ, JG, JGE, JL, JLE, JA, JAE, JB, JBE, CALL, RET, LOOP
 **I/O:** IN, OUT (for VGA palette control)
+**String:** MOVSB, MOVSW, STOSB, STOSW, LODSB, LODSW (with REP prefix)
 **Special:** INT 10h/16h/21h, NOP, HLT
 
 ## Registers

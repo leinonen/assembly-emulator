@@ -329,7 +329,25 @@ func (p *Parser) getOperandSize() int {
 		p.advance() // skip [
 
 		if p.current().Type == TokenRegister {
-			p.advance() // register
+			p.advance() // first register (seg or base)
+
+			// Check for segment override [SEG:REG] or [SEG:REG+offset]
+			if p.current().Type == TokenColon {
+				p.advance() // :
+				if p.current().Type == TokenRegister {
+					p.advance() // base register
+				}
+				if p.current().Type == TokenPlus {
+					p.advance()
+					if p.current().Type == TokenNumber {
+						p.advance()
+					}
+				}
+				if p.current().Type == TokenRightBracket {
+					p.advance()
+				}
+				return 5 // type (1) + seg reg (1) + base reg (1) + offset (2)
+			}
 
 			// Check for offset [REG+offset]
 			if p.current().Type == TokenPlus {
@@ -475,6 +493,41 @@ func (p *Parser) parseOperand() (Operand, error) {
 			reg := strings.ToUpper(p.current().Value)
 			p.advance()
 
+			// Check for segment override [SEG:REG] or [SEG:REG+offset]
+			if p.current().Type == TokenColon {
+				p.advance() // skip :
+				if p.current().Type != TokenRegister {
+					return Operand{}, fmt.Errorf("expected register after segment override")
+				}
+				baseReg := strings.ToUpper(p.current().Value)
+				p.advance()
+
+				offset := uint16(0)
+				if p.current().Type == TokenPlus {
+					p.advance()
+					if p.current().Type == TokenNumber {
+						val, err := ParseNumber(p.current().Value)
+						if err != nil {
+							return Operand{}, err
+						}
+						offset = val
+						p.advance()
+					}
+				}
+
+				if p.current().Type != TokenRightBracket {
+					return Operand{}, fmt.Errorf("expected ] but got %s", p.current().Value)
+				}
+				p.advance()
+
+				return Operand{
+					Type:   OperandTypeMemorySegReg,
+					SegReg: reg,
+					Reg:    baseReg,
+					Offset: offset,
+				}, nil
+			}
+
 			offset := uint16(0)
 
 			// Check for offset [REG+offset]
@@ -574,6 +627,7 @@ func (p *Parser) isAtEnd() bool {
 type Operand struct {
 	Type         OperandType
 	Reg          string
+	SegReg       string      // Segment register override (ES, DS, etc.) for OperandTypeMemorySegReg
 	Immediate    uint16
 	Address      uint16
 	Offset       uint16
@@ -589,6 +643,7 @@ const (
 	OperandTypeImmediate
 	OperandTypeMemory
 	OperandTypeMemoryReg
+	OperandTypeMemorySegReg // [SEG:REG] or [SEG:REG+offset]
 )
 
 // Generate instruction bytecode (simplified encoding)
@@ -738,6 +793,12 @@ func (p *Parser) emitOperand(op Operand) {
 
 	case OperandTypeMemoryReg:
 		p.emit(byte(emulator.OpTypeMemReg))
+		p.emit(encodeRegister(op.Reg))
+		p.emitWord(op.Offset)
+
+	case OperandTypeMemorySegReg:
+		p.emit(byte(emulator.OpTypeMemSegReg))
+		p.emit(encodeRegister(op.SegReg))
 		p.emit(encodeRegister(op.Reg))
 		p.emitWord(op.Offset)
 	}

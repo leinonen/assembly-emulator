@@ -96,7 +96,7 @@ fill_screen:
 
 fill_row:
     MOV AL, BL
-    MOV [DI], AL
+    MOV [ES:DI], AL
     INC DI
     INC BL
     LOOP fill_row

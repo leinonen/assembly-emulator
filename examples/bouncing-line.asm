@@ -244,7 +244,7 @@ bresenham_loop:
 
     ; Write to back buffer
     MOV AL, 15
-    MOV [DI], AL           ; Write white pixel
+    MOV [ES:DI], AL           ; Write white pixel
 
     ; Check if we reached the end point
     MOV AX, [64200]

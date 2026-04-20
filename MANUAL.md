@@ -23,7 +23,7 @@ This manual documents all implemented x86 assembly instructions in the assembly 
 
 ## Overview
 
-The emulator implements **46 unique x86 assembly instructions** with support for:
+The emulator implements **50 unique x86 assembly instructions** with support for:
 - 16-bit and 8-bit register operations
 - Memory addressing modes
 - VGA Mode 13h graphics (320x200, 256 colors)
@@ -84,6 +84,28 @@ Instructions support the following operand types:
 | **Immediate (8-bit)** | imm8 | `42`, `0xFF` | 8-bit constant value |
 | **Memory** | [addr] | `[0x1000]` | Direct memory address |
 | **Memory Indexed** | [reg] | `[BX]`, `[SI+10]` | Memory address in register with optional offset |
+| **Memory Seg Override** | [seg:reg] | `[ES:DI]`, `[DS:BX+4]` | Memory address with explicit segment register |
+
+### Segment Override Addressing
+
+The `[SEG:REG]` syntax overrides the default segment for a memory access. This is most commonly used to write directly to the VGA framebuffer via `ES`:
+
+```assembly
+MOV AX, 0xA000
+MOV ES, AX          ; point ES at VGA memory
+
+MOV DI, 0
+MOV AL, 4           ; red
+MOV [ES:DI], AL     ; write pixel — explicit ES segment
+```
+
+Without the override, `[DI]` uses ES by default (x86 convention), so `[ES:DI]` and `[DI]` are equivalent when ES is already set. The override form makes the intent explicit and also works with non-default pairings such as `[DS:DI]` or `[ES:BX]`.
+
+```assembly
+; Copy byte from DS:SI to ES:DI explicitly
+MOV AL, [DS:SI]
+MOV [ES:DI], AL
+```
 
 ---
 
@@ -253,6 +275,60 @@ DIV BX              ; AX = quotient, DX = remainder
 ```
 
 **Flags:** Undefined (division by zero causes error)
+
+---
+
+### IMUL - Signed Multiply
+**Opcode:** 0x14
+
+Multiplies AX by operand (signed). Result stored in DX:AX.
+
+**Syntax:**
+```assembly
+IMUL src
+```
+
+**Examples:**
+```assembly
+MOV AX, -100
+IMUL BX             ; DX:AX = AX * BX (signed)
+```
+
+**Flags:** CF, OF (set if result does not fit in AX)
+
+---
+
+### IDIV - Signed Division
+**Opcode:** 0x15
+
+Divides DX:AX by operand (signed). Quotient stored in AX, remainder in DX.
+
+**Syntax:**
+```assembly
+IDIV src
+```
+
+**Examples:**
+```assembly
+MOV AX, -1000
+MOV DX, 0xFFFF      ; sign-extend AX into DX (DX = 0xFFFF for negative AX)
+MOV BX, 7
+IDIV BX             ; AX = -142, DX = -6
+
+; Mirror pattern: abs((x - 160) / 5)
+MOV AX, CX
+SUB AX, 160         ; signed offset from center
+XOR DX, DX
+CMP AX, 0
+JGE no_extend
+MOV DX, 0xFFFF      ; sign extend negative value
+no_extend:
+MOV BX, 5
+IDIV BX             ; signed divide
+NEG AX              ; abs if negative
+```
+
+**Flags:** Undefined (division by zero or overflow causes error)
 
 ---
 
@@ -462,7 +538,7 @@ SAR AX, 1           ; Divide AX by 2 (signed)
 ### ROL - Rotate Left
 **Opcode:** 0x28
 
-Rotates bits left. Leftmost bit moves to rightmost position.
+Rotates bits left. The bit shifted out of the top wraps around to the bottom. CF holds the last bit rotated out (bit 0 of result). OF is set on count=1 when the sign bit changed.
 
 **Syntax:**
 ```assembly
@@ -471,17 +547,20 @@ ROL dest, count
 
 **Examples:**
 ```assembly
-ROL AX, 1           ; Rotate AX left by 1 bit
+ROL AX, 1           ; rotate left 1 — bit 15 wraps to bit 0
+ROL AX, CX          ; rotate left by CX positions
+MOV CX, 4
+ROL BX, CX          ; rotate left 4 (swap nibbles of BL and BH)
 ```
 
-**Flags:** CF (limited flag support)
+**Flags:** CF = last bit rotated out (bit 0 of result); OF = CF XOR new sign bit (count=1 only)
 
 ---
 
 ### ROR - Rotate Right
 **Opcode:** 0x29
 
-Rotates bits right. Rightmost bit moves to leftmost position.
+Rotates bits right. The bit shifted out of the bottom wraps around to the top. CF holds the last bit rotated out (bit 15 of result). OF is set on count=1 when the two top bits differ.
 
 **Syntax:**
 ```assembly
@@ -490,10 +569,11 @@ ROR dest, count
 
 **Examples:**
 ```assembly
-ROR AX, 1           ; Rotate AX right by 1 bit
+ROR AX, 1           ; rotate right 1 — bit 0 wraps to bit 15
+ROR AX, CX          ; rotate right by CX positions
 ```
 
-**Flags:** CF (limited flag support)
+**Flags:** CF = last bit rotated out (bit 15 of result); OF = top two bits differ (count=1 only)
 
 ---
 
@@ -785,6 +865,48 @@ REP STOSW           ; Fill 1000 bytes with 0xFF
 
 ---
 
+### LODSB - Load String Byte
+**Opcode:** 0x74
+
+Loads byte from DS:SI into AL, then increments SI.
+
+**Syntax:**
+```assembly
+LODSB
+```
+
+**Examples:**
+```assembly
+; Read 32 colors from a table and fill stripes
+MOV SI, color_table
+MOV CX, 32
+next_stripe:
+    LODSB               ; AL = color_table[n], SI++
+    PUSH CX
+    MOV CX, 10
+    REP STOSB           ; fill 10 pixels with that color
+    POP CX
+    LOOP next_stripe
+```
+
+**Flags:** None affected
+
+---
+
+### LODSW - Load String Word
+**Opcode:** 0x75
+
+Loads word from DS:SI into AX, then increments SI by 2.
+
+**Syntax:**
+```assembly
+LODSW
+```
+
+**Flags:** None affected
+
+---
+
 ## Interrupt Instructions
 
 ### INT - Software Interrupt
@@ -888,7 +1010,7 @@ Repeats the following string instruction CX times.
 REP instruction
 ```
 
-**Works with:** MOVSB, MOVSW, STOSB, STOSW
+**Works with:** MOVSB, MOVSW, STOSB, STOSW, LODSB, LODSW
 
 **Examples:**
 ```assembly
@@ -1119,7 +1241,7 @@ HLT
 `IN`, `OUT`
 
 ### String
-`MOVSB`, `MOVSW`, `STOSB`, `STOSW`, `REP`
+`MOVSB`, `MOVSW`, `STOSB`, `STOSW`, `LODSB`, `LODSW`, `REP`
 
 ### System
 `INT`, `NOP`, `HLT`
