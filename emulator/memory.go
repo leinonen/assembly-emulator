@@ -109,6 +109,32 @@ func (m *Memory) WriteWordLinear(addr uint32, val uint16) {
 	m.WriteByteLinear(addr+1, uint8((val>>8)&0xFF))
 }
 
+// ReadDWordLinear reads a 32-bit dword from linear address (little-endian)
+func (m *Memory) ReadDWordLinear(addr uint32) uint32 {
+	lo := m.ReadWordLinear(addr)
+	hi := m.ReadWordLinear(addr + 2)
+	return uint32(lo) | (uint32(hi) << 16)
+}
+
+// WriteDWordLinear writes a 32-bit dword to linear address (little-endian)
+func (m *Memory) WriteDWordLinear(addr uint32, val uint32) {
+	m.WriteWordLinear(addr, uint16(val&0xFFFF))
+	m.WriteWordLinear(addr+2, uint16((val>>16)&0xFFFF))
+}
+
+// ReadQWordLinear reads a 64-bit float from linear address (little-endian IEEE 754)
+func (m *Memory) ReadQWordLinear(addr uint32) uint64 {
+	lo := m.ReadDWordLinear(addr)
+	hi := m.ReadDWordLinear(addr + 4)
+	return uint64(lo) | (uint64(hi) << 32)
+}
+
+// WriteQWordLinear writes a 64-bit value to linear address (little-endian)
+func (m *Memory) WriteQWordLinear(addr uint32, val uint64) {
+	m.WriteDWordLinear(addr, uint32(val&0xFFFFFFFF))
+	m.WriteDWordLinear(addr+4, uint32((val>>32)&0xFFFFFFFF))
+}
+
 // LoadProgram loads a program into memory at the specified linear address
 func (m *Memory) LoadProgram(addr uint32, program []byte) {
 	for i, b := range program {

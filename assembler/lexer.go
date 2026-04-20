@@ -342,11 +342,16 @@ func (l *Lexer) readIdentifier() {
 	})
 }
 
-// ParseNumber parses a number token value
+// ParseNumber parses a number token value, returning up to 32 bits
 func ParseNumber(value string) (uint16, error) {
+	n, err := ParseNumber32(value)
+	return uint16(n), err
+}
+
+// ParseNumber32 parses a number token value as a 32-bit value
+func ParseNumber32(value string) (uint32, error) {
 	value = strings.TrimSpace(value)
 
-	// Negative numbers
 	negative := false
 	if strings.HasPrefix(value, "-") {
 		negative = true
@@ -356,18 +361,14 @@ func ParseNumber(value string) (uint16, error) {
 	var num int64
 	var err error
 
-	// Hexadecimal with 0x prefix
 	if strings.HasPrefix(value, "0x") || strings.HasPrefix(value, "0X") {
-		num, err = strconv.ParseInt(value[2:], 16, 32)
+		num, err = strconv.ParseInt(value[2:], 16, 64)
 	} else if strings.HasSuffix(value, "h") || strings.HasSuffix(value, "H") {
-		// Hexadecimal with h suffix
-		num, err = strconv.ParseInt(value[:len(value)-1], 16, 32)
+		num, err = strconv.ParseInt(value[:len(value)-1], 16, 64)
 	} else if strings.HasPrefix(value, "0b") || strings.HasPrefix(value, "0B") {
-		// Binary
-		num, err = strconv.ParseInt(value[2:], 2, 32)
+		num, err = strconv.ParseInt(value[2:], 2, 64)
 	} else {
-		// Decimal
-		num, err = strconv.ParseInt(value, 10, 32)
+		num, err = strconv.ParseInt(value, 10, 64)
 	}
 
 	if err != nil {
@@ -378,16 +379,21 @@ func ParseNumber(value string) (uint16, error) {
 		num = -num
 	}
 
-	return uint16(num), nil
+	return uint32(num), nil
 }
 
 func isRegister(name string) bool {
 	registers := []string{
+		// 16-bit
 		"AX", "BX", "CX", "DX",
 		"AL", "AH", "BL", "BH", "CL", "CH", "DL", "DH",
 		"SI", "DI", "BP", "SP",
 		"IP", "FLAGS",
-		"ES", "CS", "SS", "DS", // Segment registers (for compatibility)
+		"ES", "CS", "SS", "DS",
+		// 32-bit
+		"EAX", "EBX", "ECX", "EDX", "ESI", "EDI", "EBP", "ESP",
+		// FPU stack registers
+		"ST0", "ST1", "ST2", "ST3", "ST4", "ST5", "ST6", "ST7", "ST",
 	}
 
 	for _, reg := range registers {
@@ -411,12 +417,24 @@ func isInstruction(name string) bool {
 		"CALL", "RET",
 		"LOOP", "LOOPE", "LOOPZ", "LOOPNE", "LOOPNZ",
 		"INT", "NOP", "HLT",
-		"IN", "OUT", // I/O instructions
-		"MOVSB", "MOVSW", "STOSB", "STOSW", "LODSB", "LODSW", // String instructions
-		"REP", // REP prefix
-		"DB", "DW", "DD", // Data directives
-		"BYTE", "WORD", "DWORD",
-		"EQU", // Constant definition
+		"IN", "OUT",
+		"MOVSB", "MOVSW", "STOSB", "STOSW", "LODSB", "LODSW",
+		"REP",
+		"DB", "DW", "DD",
+		"BYTE", "WORD", "DWORD", "QWORD",
+		"EQU",
+		// FPU instructions
+		"FINIT", "FLDZ", "FLD1", "FLDPI",
+		"FCHS", "FABS", "FSQRT", "FSIN", "FCOS", "FPTAN", "FPATAN",
+		"FCOMPP",
+		"FADD", "FSUB", "FMUL", "FDIV",
+		"FADDP", "FSUBP", "FMULP", "FDIVP",
+		"FSUBR", "FDIVR", "FSUBRP", "FDIVRP",
+		"FLD", "FST", "FSTP",
+		"FILD", "FIST", "FISTP",
+		"FIADD", "FISUB", "FIMUL", "FIDIV",
+		"FXCH",
+		"FCOM", "FCOMP",
 	}
 
 	for _, instr := range instructions {

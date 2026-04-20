@@ -7,17 +7,32 @@ import (
 
 // CPU represents the x86 CPU state
 type CPU struct {
-	// 16-bit general purpose registers
-	AX uint16 // Accumulator
-	BX uint16 // Base
-	CX uint16 // Counter
-	DX uint16 // Data
+	// 16-bit general purpose registers (low 16 bits of 32-bit registers)
+	AX uint16 // Accumulator (low 16 of EAX)
+	BX uint16 // Base (low 16 of EBX)
+	CX uint16 // Counter (low 16 of ECX)
+	DX uint16 // Data (low 16 of EDX)
 
-	// Index and pointer registers
-	SI uint16 // Source Index
-	DI uint16 // Destination Index
-	BP uint16 // Base Pointer
-	SP uint16 // Stack Pointer
+	// 32-bit register upper halves (EAX = EAX_hi:AX, etc.)
+	EAX_hi uint16
+	EBX_hi uint16
+	ECX_hi uint16
+	EDX_hi uint16
+
+	// Index and pointer registers (low 16 bits of 32-bit registers)
+	SI uint16 // Source Index (low 16 of ESI)
+	DI uint16 // Destination Index (low 16 of EDI)
+	BP uint16 // Base Pointer (low 16 of EBP)
+	SP uint16 // Stack Pointer (low 16 of ESP)
+
+	// Upper halves for index/pointer 32-bit registers
+	ESI_hi uint16
+	EDI_hi uint16
+	EBP_hi uint16
+	ESP_hi uint16
+
+	// FPU (x87 floating-point unit)
+	FPU FPU
 
 	// Segment registers
 	CS uint16 // Code Segment
@@ -111,18 +126,75 @@ func (c *CPU) Reset() {
 	c.BX = 0
 	c.CX = 0
 	c.DX = 0
+	c.EAX_hi = 0
+	c.EBX_hi = 0
+	c.ECX_hi = 0
+	c.EDX_hi = 0
 	c.SI = 0
 	c.DI = 0
 	c.BP = 0
 	c.SP = 0xFFFE
+	c.ESI_hi = 0
+	c.EDI_hi = 0
+	c.EBP_hi = 0
+	c.ESP_hi = 0
 	c.CS = 0
 	c.DS = 0
 	c.ES = 0
 	c.SS = 0
 	c.IP = 0
 	c.Flags = Flags{}
+	c.FPU.Init()
 	c.Halted = false
 	c.Memory.Clear()
+}
+
+// 32-bit register accessors
+func (c *CPU) GetEAX() uint32 { return uint32(c.EAX_hi)<<16 | uint32(c.AX) }
+func (c *CPU) SetEAX(v uint32) { c.AX = uint16(v); c.EAX_hi = uint16(v >> 16) }
+func (c *CPU) GetEBX() uint32 { return uint32(c.EBX_hi)<<16 | uint32(c.BX) }
+func (c *CPU) SetEBX(v uint32) { c.BX = uint16(v); c.EBX_hi = uint16(v >> 16) }
+func (c *CPU) GetECX() uint32 { return uint32(c.ECX_hi)<<16 | uint32(c.CX) }
+func (c *CPU) SetECX(v uint32) { c.CX = uint16(v); c.ECX_hi = uint16(v >> 16) }
+func (c *CPU) GetEDX() uint32 { return uint32(c.EDX_hi)<<16 | uint32(c.DX) }
+func (c *CPU) SetEDX(v uint32) { c.DX = uint16(v); c.EDX_hi = uint16(v >> 16) }
+func (c *CPU) GetESI() uint32 { return uint32(c.ESI_hi)<<16 | uint32(c.SI) }
+func (c *CPU) SetESI(v uint32) { c.SI = uint16(v); c.ESI_hi = uint16(v >> 16) }
+func (c *CPU) GetEDI() uint32 { return uint32(c.EDI_hi)<<16 | uint32(c.DI) }
+func (c *CPU) SetEDI(v uint32) { c.DI = uint16(v); c.EDI_hi = uint16(v >> 16) }
+func (c *CPU) GetEBP() uint32 { return uint32(c.EBP_hi)<<16 | uint32(c.BP) }
+func (c *CPU) SetEBP(v uint32) { c.BP = uint16(v); c.EBP_hi = uint16(v >> 16) }
+func (c *CPU) GetESP() uint32 { return uint32(c.ESP_hi)<<16 | uint32(c.SP) }
+func (c *CPU) SetESP(v uint32) { c.SP = uint16(v); c.ESP_hi = uint16(v >> 16) }
+
+// 32-bit flag helpers
+func (c *CPU) UpdateZeroFlag32(val uint32)  { c.Flags.ZF = (val == 0) }
+func (c *CPU) UpdateSignFlag32(val uint32)  { c.Flags.SF = (val & 0x80000000) != 0 }
+func (c *CPU) UpdateFlags32(val uint32) {
+	c.UpdateZeroFlag32(val)
+	c.UpdateSignFlag32(val)
+}
+
+// Push32 pushes a 32-bit value onto the stack
+func (c *CPU) Push32(val uint32) error {
+	if c.SP < 4 {
+		return fmt.Errorf("stack overflow")
+	}
+	c.SP -= 4
+	addr := CalculateLinearAddress(c.SS, c.SP)
+	c.Memory.WriteDWordLinear(addr, val)
+	return nil
+}
+
+// Pop32 pops a 32-bit value from the stack
+func (c *CPU) Pop32() (uint32, error) {
+	if c.SP > 0xFFFC {
+		return 0, fmt.Errorf("stack underflow")
+	}
+	addr := CalculateLinearAddress(c.SS, c.SP)
+	val := c.Memory.ReadDWordLinear(addr)
+	c.SP += 4
+	return val, nil
 }
 
 // GetAL returns the low byte of AX
@@ -256,14 +328,18 @@ func (c *CPU) UpdateFlags8(val uint8) {
 
 // String returns a string representation of CPU state
 func (c *CPU) String() string {
-	return fmt.Sprintf("AX:%04X BX:%04X CX:%04X DX:%04X SI:%04X DI:%04X BP:%04X SP:%04X IP:%04X\n"+
-		"CS:%04X DS:%04X ES:%04X SS:%04X [%s%s%s%s]",
-		c.AX, c.BX, c.CX, c.DX, c.SI, c.DI, c.BP, c.SP, c.IP,
+	return fmt.Sprintf("EAX:%08X EBX:%08X ECX:%08X EDX:%08X\n"+
+		"ESI:%08X EDI:%08X EBP:%08X ESP:%08X IP:%04X\n"+
+		"CS:%04X DS:%04X ES:%04X SS:%04X [%s%s%s%s]\n"+
+		"ST0:%.6g ST1:%.6g ST2:%.6g ST3:%.6g",
+		c.GetEAX(), c.GetEBX(), c.GetECX(), c.GetEDX(),
+		c.GetESI(), c.GetEDI(), c.GetEBP(), c.GetESP(), c.IP,
 		c.CS, c.DS, c.ES, c.SS,
 		flagStr("C", c.Flags.CF),
 		flagStr("Z", c.Flags.ZF),
 		flagStr("S", c.Flags.SF),
 		flagStr("O", c.Flags.OF),
+		c.FPU.ST0(), c.FPU.STn(1), c.FPU.STn(2), c.FPU.STn(3),
 	)
 }
 

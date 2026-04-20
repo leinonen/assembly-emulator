@@ -236,7 +236,7 @@ func (p *Parser) parseInstructionSize() error {
 	p.advance()
 
 	// Handle DB/DW/DD directives - each value is 1/2/4 bytes
-	if instr == "DB" || instr == "DW" || instr == "DD" {
+	if instr == "DB" || instr == "DW" || instr == "DD" || instr == "DQ" {
 		var bytesPerValue uint16
 		switch instr {
 		case "DB":
@@ -302,6 +302,17 @@ func (p *Parser) parseInstructionSize() error {
 
 func (p *Parser) getOperandSize() int {
 	token := p.current()
+
+	// Handle size qualifiers (BYTE/WORD/DWORD/QWORD) - consume and continue
+	if token.Type == TokenInstruction {
+		qual := strings.ToUpper(token.Value)
+		if qual == "BYTE" || qual == "WORD" || qual == "DWORD" || qual == "QWORD" {
+			p.advance()
+			return p.getOperandSize()
+		}
+		p.advance()
+		return 2
+	}
 
 	switch token.Type {
 	case TokenRegister:
@@ -435,12 +446,35 @@ func (p *Parser) parseInstruction() error {
 func (p *Parser) parseOperand() (Operand, error) {
 	token := p.current()
 
+	// Handle size qualifiers (BYTE, WORD, DWORD, QWORD) before the actual operand
+	if token.Type == TokenInstruction {
+		qual := strings.ToUpper(token.Value)
+		if qual == "BYTE" || qual == "WORD" || qual == "DWORD" || qual == "QWORD" {
+			p.advance()
+			op, err := p.parseOperand()
+			if err != nil {
+				return Operand{}, err
+			}
+			op.SizeQualifier = qual
+			return op, nil
+		}
+		return Operand{}, fmt.Errorf("unexpected token in operand: %s", token.Value)
+	}
+
 	switch token.Type {
 	case TokenRegister:
 		p.advance()
+		reg := strings.ToUpper(token.Value)
+		if isFPURegister(reg) {
+			return Operand{
+				Type:      OperandTypeFPUReg,
+				Reg:       reg,
+				FPURegIdx: fpuRegIndex(reg),
+			}, nil
+		}
 		return Operand{
 			Type: OperandTypeRegister,
-			Reg:  strings.ToUpper(token.Value),
+			Reg:  reg,
 		}, nil
 
 	case TokenNumber:
@@ -570,6 +604,25 @@ func (p *Parser) parseOperand() (Operand, error) {
 				Type:    OperandTypeMemory,
 				Address: val,
 			}, nil
+		} else if p.current().Type == TokenLabel {
+			// [label] - direct memory reference via label address
+			labelName := strings.ToUpper(p.current().Value)
+			p.advance()
+
+			if p.current().Type != TokenRightBracket {
+				return Operand{}, fmt.Errorf("expected ] but got %s", p.current().Value)
+			}
+			p.advance()
+
+			labelInfo, ok := p.labels[labelName]
+			if !ok {
+				return Operand{}, fmt.Errorf("undefined label: %s", labelName)
+			}
+			return Operand{
+				Type:         OperandTypeMemory,
+				Address:      labelInfo.Offset,
+				LabelSegment: labelInfo.Segment,
+			}, nil
 		}
 
 		return Operand{}, fmt.Errorf("invalid memory operand")
@@ -625,14 +678,16 @@ func (p *Parser) isAtEnd() bool {
 
 // Operand represents a parsed operand
 type Operand struct {
-	Type         OperandType
-	Reg          string
-	SegReg       string      // Segment register override (ES, DS, etc.) for OperandTypeMemorySegReg
-	Immediate    uint16
-	Address      uint16
-	Offset       uint16
-	IsLabel      bool        // True if this immediate operand came from a label
-	LabelSegment SegmentType // Segment the label belongs to (for cross-segment refs)
+	Type          OperandType
+	Reg           string
+	SegReg        string      // Segment register override for OperandTypeMemorySegReg
+	Immediate     uint16
+	Address       uint16
+	Offset        uint16
+	IsLabel       bool
+	LabelSegment  SegmentType
+	FPURegIdx     int    // FPU ST register index (0-7) for OperandTypeFPUReg
+	SizeQualifier string // "BYTE", "WORD", "DWORD", "QWORD" for FPU/memory ops
 }
 
 type OperandType int
@@ -643,11 +698,324 @@ const (
 	OperandTypeImmediate
 	OperandTypeMemory
 	OperandTypeMemoryReg
-	OperandTypeMemorySegReg // [SEG:REG] or [SEG:REG+offset]
+	OperandTypeMemorySegReg
+	OperandTypeFPUReg // ST0..ST7
 )
+
+// isFPUInstruction returns true for x87 FPU mnemonics
+func isFPUInstruction(instr string) bool {
+	switch instr {
+	case "FINIT", "FLDZ", "FLD1", "FLDPI",
+		"FCHS", "FABS", "FSQRT", "FSIN", "FCOS", "FPTAN", "FPATAN", "FCOMPP",
+		"FADD", "FSUB", "FMUL", "FDIV",
+		"FADDP", "FSUBP", "FMULP", "FDIVP",
+		"FSUBR", "FDIVR", "FSUBRP", "FDIVRP",
+		"FLD", "FST", "FSTP",
+		"FILD", "FIST", "FISTP",
+		"FIADD", "FISUB", "FIMUL", "FIDIV",
+		"FXCH", "FCOM", "FCOMP":
+		return true
+	}
+	return false
+}
+
+// isMemOperand returns true if the operand is a memory reference
+func isMemOperand(op Operand) bool {
+	return op.Type == OperandTypeMemory || op.Type == OperandTypeMemoryReg || op.Type == OperandTypeMemorySegReg
+}
+
+// generateFPUInstruction generates bytecode for an FPU instruction
+func (p *Parser) generateFPUInstruction(instr string, operands []Operand) error {
+	// No-operand FPU instructions
+	noOpMap := map[string]emulator.Opcode{
+		"FINIT":   emulator.OpFINIT,
+		"FLDZ":    emulator.OpFLDZ,
+		"FLD1":    emulator.OpFLD1,
+		"FLDPI":   emulator.OpFLDPI,
+		"FCHS":    emulator.OpFCHS,
+		"FABS":    emulator.OpFABS,
+		"FSQRT":   emulator.OpFSQRT,
+		"FSIN":    emulator.OpFSIN,
+		"FCOS":    emulator.OpFCOS,
+		"FPTAN":   emulator.OpFPTAN,
+		"FPATAN":  emulator.OpFPATAN,
+		"FCOMPP":  emulator.OpFCOMPP,
+	}
+	if op, ok := noOpMap[instr]; ok {
+		p.emit(byte(op))
+		return nil
+	}
+
+	switch instr {
+	case "FADD":
+		return p.genFPUArith(operands,
+			emulator.OpFADD0, emulator.OpFADDReg, emulator.OpFADDST0, emulator.OpFADDM)
+	case "FSUB":
+		return p.genFPUArith(operands,
+			emulator.OpFSUB0, emulator.OpFSUBReg, emulator.OpFSUBST0, emulator.OpFSUBM)
+	case "FMUL":
+		return p.genFPUArith(operands,
+			emulator.OpFMUL0, emulator.OpFMULReg, emulator.OpFMULST0, emulator.OpFMULM)
+	case "FDIV":
+		return p.genFPUArith(operands,
+			emulator.OpFDIV0, emulator.OpFDIVReg, emulator.OpFDIVST0, emulator.OpFDIVM)
+	case "FSUBR":
+		return p.genFPUArith(operands,
+			emulator.OpFSUBR0, emulator.OpFSUBRReg, emulator.OpFSUBRST0, emulator.OpFSUBM)
+	case "FDIVR":
+		return p.genFPUArith(operands,
+			emulator.OpFDIVR0, emulator.OpFDIVRReg, emulator.OpFDIVRST0, emulator.OpFDIVM)
+
+	case "FADDP":
+		p.emit(byte(emulator.OpFADDP))
+		return nil
+	case "FSUBP":
+		p.emit(byte(emulator.OpFSUBP))
+		return nil
+	case "FMULP":
+		p.emit(byte(emulator.OpFMULP))
+		return nil
+	case "FDIVP":
+		p.emit(byte(emulator.OpFDIVP))
+		return nil
+	case "FSUBRP":
+		p.emit(byte(emulator.OpFSUBRP))
+		return nil
+	case "FDIVRP":
+		p.emit(byte(emulator.OpFDIVRP))
+		return nil
+
+	case "FXCH":
+		p.emit(byte(emulator.OpFXCH))
+		if len(operands) == 1 && operands[0].Type == OperandTypeFPUReg {
+			p.emitOperand(operands[0])
+		} else {
+			// default: FXCH ST1
+			p.emit(byte(emulator.OpTypeFPUReg))
+			p.emit(1)
+		}
+		return nil
+
+	case "FLD":
+		return p.genFPULoad(operands)
+	case "FST":
+		return p.genFPUStore(operands, false)
+	case "FSTP":
+		return p.genFPUStore(operands, true)
+
+	case "FILD":
+		return p.genFILD(operands)
+	case "FIST":
+		return p.genFIST(operands, false)
+	case "FISTP":
+		return p.genFIST(operands, true)
+
+	case "FIADD":
+		return p.genFIArith(operands, emulator.OpFIADD, emulator.OpFIADD32)
+	case "FISUB":
+		return p.genFIArith(operands, emulator.OpFISUB, emulator.OpFISUB32)
+	case "FIMUL":
+		return p.genFIArith(operands, emulator.OpFIMUL, emulator.OpFIMUL32)
+	case "FIDIV":
+		return p.genFIArith(operands, emulator.OpFIDIV, emulator.OpFIDIV32)
+
+	case "FCOM":
+		if len(operands) == 1 && operands[0].Type == OperandTypeFPUReg {
+			p.emit(byte(emulator.OpFCOMReg))
+			p.emitOperand(operands[0])
+		} else {
+			p.emit(byte(emulator.OpFCOMReg))
+			p.emit(byte(emulator.OpTypeFPUReg))
+			p.emit(1) // default: ST1
+		}
+		return nil
+	case "FCOMP":
+		if len(operands) == 1 && operands[0].Type == OperandTypeFPUReg {
+			p.emit(byte(emulator.OpFCOMPReg))
+			p.emitOperand(operands[0])
+		} else {
+			p.emit(byte(emulator.OpFCOMPReg))
+			p.emit(byte(emulator.OpTypeFPUReg))
+			p.emit(1) // default: ST1
+		}
+		return nil
+	}
+	return fmt.Errorf("unknown FPU instruction: %s", instr)
+}
+
+// genFPUArith generates bytecode for FADD/FSUB/FMUL/FDIV family
+// opcNoArg: ST0 op ST1 (default); opcRegDest: ST(i) op= ST0; opcRegSrc: ST0 op= ST(i); opcMem: ST0 op= mem32
+func (p *Parser) genFPUArith(operands []Operand, opcNoArg, opcRegDest, opcRegSrc, opcMem emulator.Opcode) error {
+	switch len(operands) {
+	case 0:
+		p.emit(byte(opcNoArg))
+	case 1:
+		op := operands[0]
+		if op.Type == OperandTypeFPUReg {
+			if op.FPURegIdx == 0 {
+				// FADD ST0, ST0 - treat as no-arg form
+				p.emit(byte(opcNoArg))
+			} else {
+				p.emit(byte(opcRegSrc))
+				p.emitOperand(op)
+			}
+		} else if isMemOperand(op) {
+			p.emit(byte(opcMem))
+			p.emitOperand(op)
+		} else {
+			return fmt.Errorf("invalid FPU arithmetic operand")
+		}
+	case 2:
+		// Two FPU reg operands: determine which is ST0 and which is ST(i)
+		d, s := operands[0], operands[1]
+		if d.Type != OperandTypeFPUReg || s.Type != OperandTypeFPUReg {
+			return fmt.Errorf("FPU arithmetic: expected ST register operands")
+		}
+		if d.FPURegIdx == 0 {
+			// FADD ST0, ST(i) → ST0 op= ST(i)
+			p.emit(byte(opcRegSrc))
+			p.emitOperand(s)
+		} else {
+			// FADD ST(i), ST0 → ST(i) op= ST0
+			p.emit(byte(opcRegDest))
+			p.emitOperand(d)
+		}
+	default:
+		return fmt.Errorf("too many operands for FPU arithmetic")
+	}
+	return nil
+}
+
+// genFPULoad generates FLD (load float to stack)
+func (p *Parser) genFPULoad(operands []Operand) error {
+	if len(operands) != 1 {
+		return fmt.Errorf("FLD requires exactly 1 operand")
+	}
+	op := operands[0]
+	if op.Type == OperandTypeFPUReg {
+		p.emit(byte(emulator.OpFLDReg))
+		p.emitOperand(op)
+		return nil
+	}
+	if !isMemOperand(op) {
+		return fmt.Errorf("FLD: invalid operand")
+	}
+	if op.SizeQualifier == "QWORD" {
+		p.emit(byte(emulator.OpFLD64M))
+	} else {
+		p.emit(byte(emulator.OpFLD32M)) // default DWORD
+	}
+	p.emitOperand(op)
+	return nil
+}
+
+// genFPUStore generates FST/FSTP (store float from stack)
+func (p *Parser) genFPUStore(operands []Operand, pop bool) error {
+	if len(operands) != 1 {
+		return fmt.Errorf("FST/FSTP requires exactly 1 operand")
+	}
+	op := operands[0]
+	if op.Type == OperandTypeFPUReg {
+		if pop {
+			p.emit(byte(emulator.OpFSTPReg))
+		} else {
+			p.emit(byte(emulator.OpFSTReg))
+		}
+		p.emitOperand(op)
+		return nil
+	}
+	if !isMemOperand(op) {
+		return fmt.Errorf("FST/FSTP: invalid operand")
+	}
+	if op.SizeQualifier == "QWORD" {
+		if pop {
+			p.emit(byte(emulator.OpFSTP64M))
+		} else {
+			p.emit(byte(emulator.OpFST64M))
+		}
+	} else {
+		if pop {
+			p.emit(byte(emulator.OpFSTP32M))
+		} else {
+			p.emit(byte(emulator.OpFST32M))
+		}
+	}
+	p.emitOperand(op)
+	return nil
+}
+
+// genFILD generates FILD (load integer to stack)
+func (p *Parser) genFILD(operands []Operand) error {
+	if len(operands) != 1 {
+		return fmt.Errorf("FILD requires exactly 1 operand")
+	}
+	op := operands[0]
+	if !isMemOperand(op) {
+		return fmt.Errorf("FILD: memory operand required")
+	}
+	if op.SizeQualifier == "DWORD" {
+		p.emit(byte(emulator.OpFILD32))
+	} else {
+		p.emit(byte(emulator.OpFILD)) // default WORD
+	}
+	p.emitOperand(op)
+	return nil
+}
+
+// genFIST generates FIST/FISTP (store integer from stack)
+func (p *Parser) genFIST(operands []Operand, pop bool) error {
+	if len(operands) != 1 {
+		return fmt.Errorf("FIST/FISTP requires exactly 1 operand")
+	}
+	op := operands[0]
+	if !isMemOperand(op) {
+		return fmt.Errorf("FIST/FISTP: memory operand required")
+	}
+	if op.SizeQualifier == "DWORD" {
+		if pop {
+			p.emit(byte(emulator.OpFISTP32))
+		} else {
+			p.emit(byte(emulator.OpFIST32))
+		}
+	} else {
+		if pop {
+			p.emit(byte(emulator.OpFISTP))
+		} else {
+			p.emit(byte(emulator.OpFIST))
+		}
+	}
+	p.emitOperand(op)
+	return nil
+}
+
+// genFIArith generates integer arithmetic for FPU (FIADD/FISUB/FIMUL/FIDIV)
+func (p *Parser) genFIArith(operands []Operand, opcWord, opcDword emulator.Opcode) error {
+	if len(operands) != 1 {
+		return fmt.Errorf("FPU integer arithmetic requires 1 memory operand")
+	}
+	op := operands[0]
+	if !isMemOperand(op) {
+		return fmt.Errorf("FPU integer arithmetic: memory operand required")
+	}
+	if op.SizeQualifier == "DWORD" {
+		p.emit(byte(opcDword))
+	} else {
+		p.emit(byte(opcWord))
+	}
+	p.emitOperand(op)
+	return nil
+}
 
 // Generate instruction bytecode (simplified encoding)
 func (p *Parser) generateInstruction(instr string, operands []Operand, hasREP bool) error {
+	// Handle FPU instructions separately
+	if isFPUInstruction(instr) {
+		if hasREP {
+			return fmt.Errorf("REP prefix not valid for FPU instruction %s", instr)
+		}
+		return p.generateFPUInstruction(instr, operands)
+	}
+
 	// Map instruction to opcode
 	var opcode emulator.Opcode
 	var ok bool
@@ -769,16 +1137,20 @@ func (p *Parser) emitWord(w uint16) {
 func (p *Parser) emitOperand(op Operand) {
 	switch op.Type {
 	case OperandTypeRegister:
-		// Check if register is 8-bit or 16-bit
 		if is8BitRegister(op.Reg) {
 			p.emit(byte(emulator.OpTypeReg8))
+		} else if is32BitRegister(op.Reg) {
+			p.emit(byte(emulator.OpTypeReg32))
 		} else {
 			p.emit(byte(emulator.OpTypeReg16))
 		}
 		p.emit(encodeRegister(op.Reg))
 
+	case OperandTypeFPUReg:
+		p.emit(byte(emulator.OpTypeFPUReg))
+		p.emit(byte(op.FPURegIdx))
+
 	case OperandTypeImmediate:
-		// Labels always use 16-bit encoding to match size calculation
 		if op.IsLabel || op.Immediate > 0xFF {
 			p.emit(byte(emulator.OpTypeImm16))
 			p.emitWord(op.Immediate)
@@ -839,29 +1211,26 @@ func (p *Parser) parseDataDirective(directive string, line int) error {
 			return fmt.Errorf("expected number or string in %s directive at line %d", directive, line)
 		}
 
-		val, err := ParseNumber(p.current().Value)
+		val32, err := ParseNumber32(p.current().Value)
 		if err != nil {
 			return fmt.Errorf("invalid number in %s directive at line %d: %v", directive, line, err)
 		}
 
 		switch directive {
 		case "DB":
-			// Emit byte
-			if val > 0xFF {
-				return fmt.Errorf("value %d too large for DB directive at line %d", val, line)
+			if val32 > 0xFF {
+				return fmt.Errorf("value %d too large for DB directive at line %d", val32, line)
 			}
-			p.emit(byte(val))
+			p.emit(byte(val32))
 
 		case "DW":
-			// Emit word (16-bit, little-endian)
-			p.emitWord(val)
+			p.emitWord(uint16(val32))
 
 		case "DD":
-			// Emit dword (32-bit, little-endian)
-			p.emit(byte(val & 0xFF))
-			p.emit(byte((val >> 8) & 0xFF))
-			p.emit(byte((val >> 16) & 0xFF))
-			p.emit(byte((val >> 24) & 0xFF))
+			p.emit(byte(val32 & 0xFF))
+			p.emit(byte((val32 >> 8) & 0xFF))
+			p.emit(byte((val32 >> 16) & 0xFF))
+			p.emit(byte((val32 >> 24) & 0xFF))
 		}
 
 		p.advance()
@@ -879,14 +1248,62 @@ func is8BitRegister(reg string) bool {
 	}
 }
 
+func is32BitRegister(reg string) bool {
+	switch reg {
+	case "EAX", "EBX", "ECX", "EDX", "ESI", "EDI", "EBP", "ESP":
+		return true
+	default:
+		return false
+	}
+}
+
+func isFPURegister(reg string) bool {
+	switch reg {
+	case "ST", "ST0", "ST1", "ST2", "ST3", "ST4", "ST5", "ST6", "ST7":
+		return true
+	default:
+		return false
+	}
+}
+
+func fpuRegIndex(reg string) int {
+	switch reg {
+	case "ST", "ST0":
+		return 0
+	case "ST1":
+		return 1
+	case "ST2":
+		return 2
+	case "ST3":
+		return 3
+	case "ST4":
+		return 4
+	case "ST5":
+		return 5
+	case "ST6":
+		return 6
+	case "ST7":
+		return 7
+	default:
+		return 0
+	}
+}
+
 func encodeRegister(reg string) byte {
 	regMap := map[string]byte{
+		// 16-bit
 		"AX": 0, "BX": 1, "CX": 2, "DX": 3,
 		"AL": 4, "AH": 5, "BL": 6, "BH": 7,
 		"CL": 8, "CH": 9, "DL": 10, "DH": 11,
 		"SI": 12, "DI": 13, "BP": 14, "SP": 15,
 		// Segment registers
 		"CS": 16, "DS": 17, "ES": 18, "SS": 19,
+		// 32-bit
+		"EAX": 20, "EBX": 21, "ECX": 22, "EDX": 23,
+		"ESI": 24, "EDI": 25, "EBP": 26, "ESP": 27,
+		// FPU (encoded as their stack index)
+		"ST": 30, "ST0": 30, "ST1": 31, "ST2": 32, "ST3": 33,
+		"ST4": 34, "ST5": 35, "ST6": 36, "ST7": 37,
 	}
 
 	if code, ok := regMap[reg]; ok {

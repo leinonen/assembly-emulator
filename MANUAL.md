@@ -17,14 +17,17 @@ This manual documents all implemented x86 assembly instructions in the assembly 
 11. [String Instructions](#string-instructions)
 12. [Interrupt Instructions](#interrupt-instructions)
 13. [Instruction Prefixes](#instruction-prefixes)
-14. [VGA Graphics Programming](#vga-graphics-programming)
+14. [FPU Instructions](#fpu-instructions)
+15. [VGA Graphics Programming](#vga-graphics-programming)
 
 ---
 
 ## Overview
 
-The emulator implements **50 unique x86 assembly instructions** with support for:
+The emulator implements x86 assembly instructions with support for:
 - 16-bit and 8-bit register operations
+- 32-bit extended register operations (EAX, EBX, ECX, EDX, ESI, EDI, EBP, ESP)
+- x87 FPU floating-point stack machine (ST0–ST7)
 - Memory addressing modes
 - VGA Mode 13h graphics (320x200, 256 colors)
 - Software interrupts (INT 10h, 16h, 21h)
@@ -40,6 +43,26 @@ The emulator implements **50 unique x86 assembly instructions** with support for
 - **BX** - Base (BH:BL)
 - **CX** - Counter (CH:CL)
 - **DX** - Data (DH:DL)
+
+### General Purpose Registers (32-bit)
+The 32-bit registers share storage with their 16-bit counterparts — writing EAX also updates AX, and vice versa.
+
+| 32-bit | 16-bit low half |
+|--------|-----------------|
+| EAX | AX |
+| EBX | BX |
+| ECX | CX |
+| EDX | DX |
+| ESI | SI |
+| EDI | DI |
+| EBP | BP |
+| ESP | SP |
+
+### FPU Registers (x87 Stack)
+The x87 FPU uses a stack of eight 80-bit (internally float64) registers. ST0 is always the top of stack.
+
+- **ST0** – Top of FPU stack
+- **ST1–ST7** – Remaining stack slots
 
 ### Index and Pointer Registers
 - **SI** - Source Index
@@ -80,6 +103,8 @@ Instructions support the following operand types:
 |------|--------|---------|-------------|
 | **Register (16-bit)** | reg16 | `AX`, `BX`, `CX` | 16-bit general purpose register |
 | **Register (8-bit)** | reg8 | `AL`, `AH`, `BL` | 8-bit register (high/low byte) |
+| **Register (32-bit)** | reg32 | `EAX`, `EBX`, `ECX` | 32-bit extended register |
+| **FPU Register** | ST(i) | `ST0`, `ST1` | x87 FPU stack register |
 | **Immediate (16-bit)** | imm16 | `1234`, `0x1000` | 16-bit constant value |
 | **Immediate (8-bit)** | imm8 | `42`, `0xFF` | 8-bit constant value |
 | **Memory** | [addr] | `[0x1000]` | Direct memory address |
@@ -1023,6 +1048,221 @@ REP STOSW           ; Store 500 words
 
 ---
 
+## FPU Instructions
+
+The emulator implements the x87 floating-point unit as a stack machine. `ST0` is always the top of the stack. Push operations decrease the stack pointer; pop operations increase it.
+
+Size qualifiers (`WORD`, `DWORD`, `QWORD`) before a memory operand select the integer or float width:
+- `WORD` – 16-bit integer (default for `FILD`/`FIST`/`FISTP`)
+- `DWORD` – 32-bit integer or 32-bit float (`FILD`/`FLD`/`FST`/`FSTP`)
+- `QWORD` – 64-bit float (`FLD`/`FST`/`FSTP`)
+
+---
+
+### FINIT – Initialize FPU
+
+Resets FPU state. Clears the stack and resets all status/control registers.
+
+```assembly
+finit
+```
+
+---
+
+### Load Constants
+
+| Instruction | Action |
+|-------------|--------|
+| `FLDZ` | Push +0.0 |
+| `FLD1` | Push +1.0 |
+| `FLDPI` | Push π |
+
+---
+
+### FLD – Load Floating-Point Value
+
+Pushes a value onto the FPU stack.
+
+```assembly
+fld st0              ; push copy of ST0
+fld st2              ; push copy of ST2
+fld dword [si]       ; push 32-bit float from memory
+fld qword [si]       ; push 64-bit float from memory
+```
+
+---
+
+### FST / FSTP – Store Floating-Point Value
+
+Copies ST0 to a register or memory. `FSTP` also pops the stack.
+
+```assembly
+fst  st2             ; ST2 = ST0 (no pop)
+fstp st1             ; ST1 = ST0, pop
+fst  dword [si]      ; store ST0 as float32 to memory
+fstp qword [si]      ; store ST0 as float64, pop
+```
+
+---
+
+### FILD – Load Integer
+
+Converts an integer from memory to float64 and pushes it.
+
+```assembly
+fild word  [val]     ; push int16 from memory
+fild dword [val]     ; push int32 from memory
+```
+
+---
+
+### FIST / FISTP – Store Integer
+
+Rounds ST0 to an integer and writes to memory. `FISTP` also pops.
+
+```assembly
+fist  word [temp]    ; store ST0 as int16
+fistp word [temp]    ; store ST0 as int16, pop
+fistp dword [temp]   ; store ST0 as int32, pop
+```
+
+---
+
+### FXCH – Exchange Stack Registers
+
+Swaps ST0 with another stack register.
+
+```assembly
+fxch st1             ; swap ST0 and ST1
+fxch st3             ; swap ST0 and ST3
+```
+
+---
+
+### Arithmetic: Stack-implicit Forms
+
+These operate on `ST0` and `ST1`. The `P` suffix pops ST0 after the operation; the result lands in ST1 (which becomes the new ST0 after the pop).
+
+| No-operand | With P suffix | Operation |
+|------------|---------------|-----------|
+| `FADD` | `FADDP` | ST1 += ST0 |
+| `FSUB` | `FSUBP` | ST1 -= ST0 |
+| `FMUL` | `FMULP` | ST1 *= ST0 |
+| `FDIV` | `FDIVP` | ST1 /= ST0 |
+| `FSUBR` | `FSUBRP` | ST1 = ST0 - ST1 |
+| `FDIVR` | `FDIVRP` | ST1 = ST0 / ST1 |
+
+```assembly
+; Compute 2*pi/256 on the FPU stack:
+fild word [val_256]  ; ST0=256
+fldpi               ; ST0=pi, ST1=256
+fld1                ; ST0=1
+fld1                ; ST0=1, ST1=1
+faddp               ; ST0=2, ST1=pi, ST2=256
+fmulp               ; ST0=2*pi, ST1=256
+fdivrp              ; ST0 = ST1/ST0 = 256/(2*pi) ... actually 2*pi/256
+```
+
+> **`FDIVRP` vs `FDIVP`:** `FDIVP` computes ST1/ST0 then pops. `FDIVRP` computes ST0/ST1 then pops. Use `FDIVRP` when you want numerator on top.
+
+---
+
+### Arithmetic: Register Forms
+
+One FPU register operand. The operand is the non-ST0 register.
+
+```assembly
+fadd st1             ; ST1 += ST0
+fmul st2             ; ST2 *= ST0
+fdiv st3             ; ST3 /= ST0
+
+; ST0 as destination:
+fadd st0, st2        ; ST0 += ST2
+fmul st0, st1        ; ST0 *= ST1
+```
+
+---
+
+### Arithmetic: Memory Forms
+
+Operates on ST0 with a value from memory.
+
+```assembly
+fadd dword [val]     ; ST0 += float32 at [val]
+fmul dword [val]     ; ST0 *= float32 at [val]
+```
+
+Integer memory forms (`FIADD`, `FISUB`, `FIMUL`, `FIDIV`) work similarly with `WORD` or `DWORD` memory:
+
+```assembly
+fiadd word [n]       ; ST0 += int16 at [n]
+fimul dword [n]      ; ST0 *= int32 at [n]
+```
+
+---
+
+### Trigonometric and Math
+
+| Instruction | Operation |
+|-------------|-----------|
+| `FSIN` | ST0 = sin(ST0) |
+| `FCOS` | ST0 = cos(ST0) |
+| `FSQRT` | ST0 = √ST0 |
+| `FABS` | ST0 = \|ST0\| |
+| `FCHS` | ST0 = −ST0 |
+| `FPTAN` | ST0 = tan(ST0), push 1.0 |
+| `FPATAN` | ST1 = atan2(ST1, ST0), pop |
+
+---
+
+### FCOM / FCOMP / FCOMPP – Compare
+
+Compares ST0 with another value and sets FPU status word flags.
+
+```assembly
+fcom  st1            ; compare ST0 with ST1
+fcomp st2            ; compare, pop once
+fcompp               ; compare ST0 with ST1, pop twice
+```
+
+---
+
+### FPU Example: Runtime Sine Table
+
+```assembly
+; Build a 256-entry byte sine table: value = round(sin(i*2pi/256)*127+127)
+finit
+
+fild word [val_256]  ; ST0=256
+fldpi                ; ST0=pi, ST1=256
+fld1
+fld1
+faddp                ; ST0=2,  ST1=pi,  ST2=256
+fmulp                ; ST0=2pi, ST1=256
+fdivrp               ; ST0=step=2pi/256
+
+fldz                 ; ST0=angle=0, ST1=step
+mov cx, 256
+mov di, sine_table
+gen_loop:
+    fld st0          ; push copy of angle
+    fsin             ; ST0=sin(angle)
+    fild word [c127] ; ST0=127
+    fmulp            ; ST0=sin*127
+    fild word [c127] ; ST0=127
+    faddp            ; ST0=sin*127+127
+    fistp word [tmp] ; round and store as int16, pop
+    mov al, [tmp]
+    mov [di], al
+    inc di
+    fadd st1         ; angle += step
+    loop gen_loop
+
+finit
+```
+
+---
+
 ## VGA Graphics Programming
 
 ### Mode 13h - 320x200 256-color Graphics
@@ -1206,17 +1446,19 @@ HLT
 
 ## Notes and Limitations
 
-1. **16-bit Mode Only:** The emulator operates in 16-bit real mode. No 32-bit or 64-bit instructions are supported.
+1. **Primary Mode:** 16-bit real mode. 32-bit extended registers (EAX–ESP) are supported for counter/accumulator use; full 32-bit protected mode is not.
 
 2. **Limited Interrupt Support:** Only INT 10h (video), INT 16h (keyboard), and INT 21h (DOS exit) are implemented.
 
-3. **Memory Model:** Simple linear memory model without segment:offset calculations for most operations.
+3. **Memory Model:** Segmented model with CS, DS, ES, SS. Default segment per instruction follows x86 conventions (DS for most reads, ES for string destinations).
 
-4. **Floating Point:** No FPU instructions are supported.
+4. **FPU:** x87 stack machine with ST0–ST7 supported. 80-bit extended precision is internally represented as float64.
 
 5. **String Direction:** String instructions always increment (DF flag not implemented).
 
-6. **Instruction Set:** This is a subset of the full x86 instruction set, focused on educational and graphics programming purposes.
+6. **Segment Registers and DS:** When code changes DS for blitting (e.g. `mov ds, 0x7000`), any subsequent `[si]`/`[mem]` access targets the new segment. Do all data-variable writes before switching DS.
+
+7. **Instruction Set:** This is a focused subset of x86, designed for educational and graphics programming.
 
 ---
 
@@ -1242,6 +1484,19 @@ HLT
 
 ### String
 `MOVSB`, `MOVSW`, `STOSB`, `STOSW`, `LODSB`, `LODSW`, `REP`
+
+### 32-bit Registers
+`EAX`, `EBX`, `ECX`, `EDX`, `ESI`, `EDI`, `EBP`, `ESP` (share storage with 16-bit halves)
+
+### FPU
+`FINIT`, `FLDZ`, `FLD1`, `FLDPI`
+`FLD`, `FST`, `FSTP`, `FXCH`
+`FILD`, `FIST`, `FISTP`
+`FADD`, `FSUB`, `FMUL`, `FDIV`, `FSUBR`, `FDIVR`
+`FADDP`, `FSUBP`, `FMULP`, `FDIVP`, `FSUBRP`, `FDIVRP`
+`FIADD`, `FISUB`, `FIMUL`, `FIDIV`
+`FSIN`, `FCOS`, `FSQRT`, `FABS`, `FCHS`, `FPTAN`, `FPATAN`
+`FCOM`, `FCOMP`, `FCOMPP`
 
 ### System
 `INT`, `NOP`, `HLT`

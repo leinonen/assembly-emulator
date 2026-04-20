@@ -164,6 +164,25 @@ func (c *CPU) decodeOperand() (Operand, int, error) {
 		op.MemSegment = *segPtr
 		op.SegOverride = true
 
+	case OpTypeReg32:
+		addr = CalculateLinearAddress(c.CS, c.IP)
+		regCode := c.Memory.ReadByteLinear(addr)
+		c.IP++
+		size++
+
+		getter, setter, err := c.decodeRegister32(regCode)
+		if err != nil {
+			return op, size, err
+		}
+		op.Reg32Get = getter
+		op.Reg32Set = setter
+
+	case OpTypeFPUReg:
+		addr = CalculateLinearAddress(c.CS, c.IP)
+		op.FPURegIdx = int(c.Memory.ReadByteLinear(addr))
+		c.IP++
+		size++
+
 	default:
 		return op, size, fmt.Errorf("unknown operand type: 0x%02X", opType)
 	}
@@ -200,6 +219,29 @@ func (c *CPU) decodeRegister16(code byte) (*uint16, error) {
 		return &c.SS, nil
 	default:
 		return nil, fmt.Errorf("invalid 16-bit register code: %d", code)
+	}
+}
+
+func (c *CPU) decodeRegister32(code byte) (func() uint32, func(uint32), error) {
+	switch code {
+	case 20:
+		return c.GetEAX, c.SetEAX, nil
+	case 21:
+		return c.GetEBX, c.SetEBX, nil
+	case 22:
+		return c.GetECX, c.SetECX, nil
+	case 23:
+		return c.GetEDX, c.SetEDX, nil
+	case 24:
+		return c.GetESI, c.SetESI, nil
+	case 25:
+		return c.GetEDI, c.SetEDI, nil
+	case 26:
+		return c.GetEBP, c.SetEBP, nil
+	case 27:
+		return c.GetESP, c.SetESP, nil
+	default:
+		return nil, nil, fmt.Errorf("invalid 32-bit register code: %d", code)
 	}
 }
 
@@ -286,6 +328,31 @@ func getOperandCount(opcode Opcode) int {
 		return 0
 	case OpOUT, OpIN:
 		return 2
+
+	// FPU no-operand
+	case OpFINIT, OpFLDZ, OpFLD1, OpFLDPI,
+		OpFCHS, OpFABS, OpFSQRT, OpFSIN, OpFCOS, OpFPTAN, OpFPATAN, OpFCOMPP,
+		OpFADD0, OpFSUB0, OpFMUL0, OpFDIV0, OpFSUBR0, OpFDIVR0,
+		OpFADDP, OpFSUBP, OpFMULP, OpFDIVP, OpFSUBRP, OpFDIVRP:
+		return 0
+
+	// FPU 1 FPU-register operand
+	case OpFXCH, OpFLDReg, OpFSTPReg, OpFSTReg, OpFCOMReg, OpFCOMPReg:
+		return 1
+
+	// FPU 1 memory operand
+	case OpFILD, OpFIST, OpFISTP, OpFILD32, OpFIST32, OpFISTP32,
+		OpFLD32M, OpFST32M, OpFSTP32M, OpFLD64M, OpFST64M, OpFSTP64M,
+		OpFIADD, OpFISUB, OpFIMUL, OpFIDIV,
+		OpFIADD32, OpFISUB32, OpFIMUL32, OpFIDIV32,
+		OpFADDM, OpFSUBM, OpFMULM, OpFDIVM:
+		return 1
+
+	// FPU 1 FPU-register operand (register arithmetic forms)
+	case OpFADDReg, OpFSUBReg, OpFMULReg, OpFDIVReg, OpFSUBRReg, OpFDIVRReg,
+		OpFADDST0, OpFSUBST0, OpFMULST0, OpFDIVST0, OpFSUBRST0, OpFDIVRST0:
+		return 1
+
 	default:
 		return 0
 	}
