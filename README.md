@@ -47,7 +47,11 @@ Press **ESC** or close window to exit.
       <b>Bouncing Line</b><br/>
       <code>examples/bouncing-line.asm</code>
     </td>
-    <td></td>
+    <td align="center">
+      <img src="examples/gifs/cube.gif" width="320" alt="3D Wireframe Cube"/><br/>
+      <b>3D Wireframe Cube</b><br/>
+      <code>examples/cube.asm</code>
+    </td>
   </tr>
 </table>
 
