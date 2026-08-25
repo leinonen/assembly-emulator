@@ -1,199 +1,86 @@
 package emulator
 
-import (
-	"assembly-emulator/font"
-	"sync"
-)
+// Memory models the physical address space of a real-mode PC: 1 MB of RAM
+// plus the 64 KB HMA that becomes reachable when the A20 gate is enabled.
+//
+// Addresses 0xA0000-0xBFFFF are routed through an optional MMIO handler so
+// a VGA card can implement planar memory; everything else is plain RAM.
+// 0xF0000-0xFFFFF is treated as ROM (writes ignored) once ROMProtect is set.
+type Memory struct {
+	RAM        []byte
+	A20        bool
+	ROMProtect bool
+
+	// MMIO handlers for 0xA0000-0xBFFFF. nil means plain RAM.
+	MMIORead  func(addr uint32) byte
+	MMIOWrite func(addr uint32, v byte)
+}
 
 const (
-	// Memory size constants for x86 real mode (1MB addressable)
-	TotalMemorySize = 0x100000 // 1MB total addressable memory
-	VGAMemoryStart  = 0xA0000  // VGA memory starts at 0xA0000 (linear address)
-	VGAMemorySize   = 64000    // 320x200 pixels
-
-	// BIOS ROM constants
-	ROMStart      = 0xF0000  // BIOS ROM starts at 0xF0000 (960KB)
-	ROMSize       = 0x10000  // 64KB ROM space
-	BIOSFontAddr  = 0xFA000  // CP437 font location (F000:A000, adjusted to fit in 1MB)
-	BIOSFontSize  = 4096     // 256 characters * 16 bytes
+	MemSize     = 0x110000 // 1 MB + 64 KB HMA
+	mmioStart   = 0xA0000
+	mmioEnd     = 0xC0000
+	romStart    = 0xF0000
+	romEnd      = 0x100000
+	VGAMemStart = 0xA0000
 )
 
-// Memory represents the system memory including VGA video memory
-type Memory struct {
-	RAM     []byte     // 1MB RAM (VGA is mapped within this space at 0xA0000)
-	VGA     []byte     // VGA video memory (separate for easy rendering access)
-	vgaMux  sync.Mutex // Mutex to protect VGA memory from race conditions
-}
-
-// NewMemory creates a new memory instance
 func NewMemory() *Memory {
-	return &Memory{
-		RAM: make([]byte, TotalMemorySize),
-		VGA: make([]byte, VGAMemorySize),
-	}
+	return &Memory{RAM: make([]byte, MemSize)}
 }
 
-// CalculateLinearAddress converts segment:offset to 20-bit linear address
-// In real mode: linear = (segment << 4) + offset
-func CalculateLinearAddress(segment, offset uint16) uint32 {
-	return (uint32(segment) << 4) + uint32(offset)
+// mask applies the A20 gate: with A20 disabled the address wraps at 1 MB.
+func (m *Memory) mask(addr uint32) uint32 {
+	if m.A20 {
+		return addr & 0x1FFFFF % MemSize
+	}
+	return addr & 0xFFFFF
 }
 
-// Clear clears all memory
-func (m *Memory) Clear() {
-	for i := range m.RAM {
-		m.RAM[i] = 0
+func (m *Memory) Read8(addr uint32) byte {
+	addr = m.mask(addr)
+	if addr >= mmioStart && addr < mmioEnd && m.MMIORead != nil {
+		return m.MMIORead(addr)
 	}
-	for i := range m.VGA {
-		m.VGA[i] = 0
-	}
-}
-
-// ReadByteLinear reads a byte from linear (physical) address
-func (m *Memory) ReadByteLinear(addr uint32) uint8 {
-	// Ensure address is within 1MB
-	addr = addr & 0xFFFFF
-
-	// VGA memory mapping at 0xA0000-0xAFA00 (64000 bytes)
-	if addr >= VGAMemoryStart && addr < VGAMemoryStart+uint32(VGAMemorySize) {
-		offset := addr - VGAMemoryStart
-		return m.VGA[offset]
-	}
-
 	return m.RAM[addr]
 }
 
-// WriteByteLinear writes a byte to linear (physical) address
-func (m *Memory) WriteByteLinear(addr uint32, val uint8) {
-	// Ensure address is within 1MB
-	addr = addr & 0xFFFFF
-
-	// ROM area is read-only - ignore writes to 0xF0000-0xFFFFF
-	if addr >= ROMStart && addr < ROMStart+ROMSize {
-		// Silently ignore writes to ROM
+func (m *Memory) Write8(addr uint32, v byte) {
+	addr = m.mask(addr)
+	if addr >= mmioStart && addr < mmioEnd && m.MMIOWrite != nil {
+		m.MMIOWrite(addr, v)
 		return
 	}
-
-	// VGA memory mapping at 0xA0000-0xAFA00 (64000 bytes)
-	if addr >= VGAMemoryStart && addr < VGAMemoryStart+uint32(VGAMemorySize) {
-		offset := addr - VGAMemoryStart
-		m.VGA[offset] = val
-		// Also update RAM for consistency
-		m.RAM[addr] = val
+	if m.ROMProtect && addr >= romStart && addr < romEnd {
 		return
 	}
-
-	m.RAM[addr] = val
+	m.RAM[addr] = v
 }
 
-// ReadWord reads a 16-bit word from memory (little-endian, legacy)
-func (m *Memory) ReadWord(addr uint16) uint16 {
-	return m.ReadWordLinear(uint32(addr))
+func (m *Memory) Read16(addr uint32) uint16 {
+	return uint16(m.Read8(addr)) | uint16(m.Read8(addr+1))<<8
 }
 
-// WriteWord writes a 16-bit word to memory (little-endian, legacy)
-func (m *Memory) WriteWord(addr uint16, val uint16) {
-	m.WriteWordLinear(uint32(addr), val)
+func (m *Memory) Write16(addr uint32, v uint16) {
+	m.Write8(addr, byte(v))
+	m.Write8(addr+1, byte(v>>8))
 }
 
-// ReadWordLinear reads a 16-bit word from linear address (little-endian)
-func (m *Memory) ReadWordLinear(addr uint32) uint16 {
-	low := m.ReadByteLinear(addr)
-	high := m.ReadByteLinear(addr + 1)
-	return uint16(low) | (uint16(high) << 8)
+func (m *Memory) Read32(addr uint32) uint32 {
+	return uint32(m.Read16(addr)) | uint32(m.Read16(addr+2))<<16
 }
 
-// WriteWordLinear writes a 16-bit word to linear address (little-endian)
-func (m *Memory) WriteWordLinear(addr uint32, val uint16) {
-	m.WriteByteLinear(addr, uint8(val&0xFF))
-	m.WriteByteLinear(addr+1, uint8((val>>8)&0xFF))
+func (m *Memory) Write32(addr uint32, v uint32) {
+	m.Write16(addr, uint16(v))
+	m.Write16(addr+2, uint16(v>>16))
 }
 
-// ReadDWordLinear reads a 32-bit dword from linear address (little-endian)
-func (m *Memory) ReadDWordLinear(addr uint32) uint32 {
-	lo := m.ReadWordLinear(addr)
-	hi := m.ReadWordLinear(addr + 2)
-	return uint32(lo) | (uint32(hi) << 16)
+// WriteROM bypasses ROM protection and MMIO; used to install BIOS images.
+func (m *Memory) WriteROM(addr uint32, data []byte) {
+	copy(m.RAM[addr:], data)
 }
 
-// WriteDWordLinear writes a 32-bit dword to linear address (little-endian)
-func (m *Memory) WriteDWordLinear(addr uint32, val uint32) {
-	m.WriteWordLinear(addr, uint16(val&0xFFFF))
-	m.WriteWordLinear(addr+2, uint16((val>>16)&0xFFFF))
-}
-
-// ReadQWordLinear reads a 64-bit float from linear address (little-endian IEEE 754)
-func (m *Memory) ReadQWordLinear(addr uint32) uint64 {
-	lo := m.ReadDWordLinear(addr)
-	hi := m.ReadDWordLinear(addr + 4)
-	return uint64(lo) | (uint64(hi) << 32)
-}
-
-// WriteQWordLinear writes a 64-bit value to linear address (little-endian)
-func (m *Memory) WriteQWordLinear(addr uint32, val uint64) {
-	m.WriteDWordLinear(addr, uint32(val&0xFFFFFFFF))
-	m.WriteDWordLinear(addr+4, uint32((val>>32)&0xFFFFFFFF))
-}
-
-// LoadProgram loads a program into memory at the specified linear address
-func (m *Memory) LoadProgram(addr uint32, program []byte) {
-	for i, b := range program {
-		if addr+uint32(i) >= TotalMemorySize {
-			break
-		}
-		m.RAM[addr+uint32(i)] = b
-	}
-}
-
-// LockVGA locks the VGA memory mutex (call before reading VGA memory for rendering)
-func (m *Memory) LockVGA() {
-	m.vgaMux.Lock()
-}
-
-// UnlockVGA unlocks the VGA memory mutex (call after reading VGA memory for rendering)
-func (m *Memory) UnlockVGA() {
-	m.vgaMux.Unlock()
-}
-
-// GetVGAMemory returns a reference to the VGA memory for rendering
-// IMPORTANT: Caller must call LockVGA() before and UnlockVGA() after using this
-func (m *Memory) GetVGAMemory() []byte {
-	return m.VGA
-}
-
-// GetVGAPixel gets a pixel color at x, y coordinates (Mode 13h: 320x200)
-func (m *Memory) GetVGAPixel(x, y int) uint8 {
-	if x < 0 || x >= 320 || y < 0 || y >= 200 {
-		return 0
-	}
-	offset := y*320 + x
-	if offset < len(m.VGA) {
-		return m.VGA[offset]
-	}
-	return 0
-}
-
-// SetVGAPixel sets a pixel color at x, y coordinates (Mode 13h: 320x200)
-func (m *Memory) SetVGAPixel(x, y int, color uint8) {
-	if x < 0 || x >= 320 || y < 0 || y >= 200 {
-		return
-	}
-	offset := y*320 + x
-	if offset < len(m.VGA) {
-		m.VGA[offset] = color
-	}
-}
-
-// InitializeBIOSROM initializes the BIOS ROM area with CP437 font data
-// This should be called once during CPU initialization
-func (m *Memory) InitializeBIOSROM() {
-	// Copy CP437 font data to ROM at standard BIOS font location
-	// Font is 256 characters * 16 bytes = 4096 bytes
-	for char := 0; char < 256; char++ {
-		for row := 0; row < 16; row++ {
-			addr := BIOSFontAddr + uint32(char*16+row)
-			// Directly write to RAM (bypass WriteByteLinear's ROM protection)
-			m.RAM[addr] = font.CP437Font[char][row]
-		}
-	}
+// Linear computes a real-mode physical address from segment:offset.
+func Linear(seg uint16, off uint32) uint32 {
+	return uint32(seg)<<4 + off
 }

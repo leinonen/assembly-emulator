@@ -1,8 +1,12 @@
+; Ported to NASM syntax: assemble with `asm-emu asm` or run directly.
+org 100h
+bits 16
+
 ; Bouncing Line with Bresenham Algorithm
 ; Two endpoints bounce on screen edges, connected by a line
 ; Uses double buffering and VSync for smooth animation
 
-.code
+section .text
     ; Set VGA mode 13h (320x200, 256 colors)
     MOV AX, 0x13
     INT 0x10
@@ -324,7 +328,15 @@ line_done:
 do_flip:
     ; Wait for VBlank - ensures smooth 60 FPS without tearing
     MOV DX, 0x3DA
-    IN AL, DX              ; Reading 0x3DA waits for VBlank
+    ; wait for the current vertical retrace to end, then for the next one to start
+.vs325a:
+    in al, dx
+    test al, 8
+    jnz .vs325a
+.vs325b:
+    in al, dx
+    test al, 8
+    jz .vs325b
 
     ; DOUBLE BUFFER FLIP: Copy back buffer to VGA memory
     PUSH DS
@@ -359,4 +371,5 @@ exit_program:
     MOV AX, 0x03
     INT 0x10
 
-    HLT
+    mov ax, 4C00h
+    int 21h

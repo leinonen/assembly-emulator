@@ -1,3 +1,7 @@
+; Ported to NASM syntax: assemble with `asm-emu asm` or run directly.
+org 100h
+bits 16
+
 ; VGA Palette Manipulation Demo
 ; This program sets up a custom grayscale palette and displays gradient bars
 
@@ -55,4 +59,5 @@ draw_row_loop:
     CMP DI, 200
     JL draw_row_loop
 
-HLT
+mov ax, 4C00h
+int 21h

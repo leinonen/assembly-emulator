@@ -1,8 +1,12 @@
+; Ported to NASM syntax: assemble with `asm-emu asm` or run directly.
+org 100h
+bits 16
+
 ; Rotating 3D Wireframe Cube
 ; 8 vertices, 12 edges, X and Y axis rotation, perspective projection
 ; Double-buffered animation with VSync
 
-.data
+section .data
     ; 8 cube vertices: (vx, vy, vz) as signed words, range -64..64
     cube_verts:
         dw -64, -64, -64
@@ -77,7 +81,7 @@
     bres_err: dw 0
     bres_e2:  dw 0
 
-.code
+section .text
 start:
     mov ax, 0x13
     int 0x10
@@ -110,7 +114,15 @@ main_loop:
 
     ; VBlank sync
     mov dx, 0x3DA
+    ; wait for the current vertical retrace to end, then for the next one to start
+.vs111a:
     in al, dx
+    test al, 8
+    jnz .vs111a
+.vs111b:
+    in al, dx
+    test al, 8
+    jz .vs111b
 
     ; Blit back buffer to VGA
     push ds
@@ -139,7 +151,8 @@ main_loop:
 
     mov ax, 0x03
     int 0x10
-    hlt
+    mov ax, 4C00h
+    int 21h
 
 
 ; Build sine_table[i] = round(sin(i*2pi/256)*127+127) using x87 FPU
@@ -172,7 +185,7 @@ bst_loop:
     faddp
     fistp word [si]
     mov al, [si]
-    mov [di], al
+    mov [es:di], al
     inc di
     fadd st1                ; angle += step
     loop bst_loop

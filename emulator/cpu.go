@@ -1,508 +1,526 @@
 package emulator
 
-import (
-	"assembly-emulator/font"
-	"fmt"
+import "fmt"
+
+// Model selects the few places where 8088 and 386 semantics differ
+// (shift-count masking, PUSH SP, divide-fault return address, ...).
+type Model int
+
+const (
+	Model8088 Model = iota
+	Model386
 )
 
-// CPU represents the x86 CPU state
+// General register indices (Intel encoding order).
+const (
+	RegAX = iota
+	RegCX
+	RegDX
+	RegBX
+	RegSP
+	RegBP
+	RegSI
+	RegDI
+)
+
+// Segment register indices (Intel encoding order).
+const (
+	SegES = iota
+	SegCS
+	SegSS
+	SegDS
+	SegFS
+	SegGS
+	segNone = -1
+)
+
+// EFLAGS bits.
+const (
+	FlagCF = 1 << 0
+	FlagPF = 1 << 2
+	FlagAF = 1 << 4
+	FlagZF = 1 << 6
+	FlagSF = 1 << 7
+	FlagTF = 1 << 8
+	FlagIF = 1 << 9
+	FlagDF = 1 << 10
+	FlagOF = 1 << 11
+	FlagNT = 1 << 14
+	FlagRF = 1 << 16
+
+	flagsArith = FlagCF | FlagPF | FlagAF | FlagZF | FlagSF | FlagOF
+)
+
+// Bus is the I/O port interface.
+type Bus interface {
+	In8(port uint16) uint8
+	Out8(port uint16, v uint8)
+	In16(port uint16) uint16
+	Out16(port uint16, v uint16)
+	In32(port uint16) uint32
+	Out32(port uint16, v uint32)
+}
+
+// NullBus returns 0xFF for reads and swallows writes.
+type NullBus struct{}
+
+func (NullBus) In8(uint16) uint8     { return 0xFF }
+func (NullBus) Out8(uint16, uint8)   {}
+func (NullBus) In16(uint16) uint16   { return 0xFFFF }
+func (NullBus) Out16(uint16, uint16) {}
+func (NullBus) In32(uint16) uint32   { return 0xFFFFFFFF }
+func (NullBus) Out32(uint16, uint32) {}
+
+// Fault is returned by Step for conditions the emulator itself cannot
+// handle (never for guest-visible exceptions, which are delivered via IVT).
+type Fault struct {
+	CS, IP uint32
+	Msg    string
+}
+
+func (f *Fault) Error() string { return fmt.Sprintf("%04X:%04X: %s", f.CS, f.IP, f.Msg) }
+
+// CPU is a 386-class processor running in real mode.
 type CPU struct {
-	// 16-bit general purpose registers (low 16 bits of 32-bit registers)
-	AX uint16 // Accumulator (low 16 of EAX)
-	BX uint16 // Base (low 16 of EBX)
-	CX uint16 // Counter (low 16 of ECX)
-	DX uint16 // Data (low 16 of EDX)
+	Regs  [8]uint32
+	Segs  [6]uint16
+	EIP   uint32
+	Flags uint32
 
-	// 32-bit register upper halves (EAX = EAX_hi:AX, etc.)
-	EAX_hi uint16
-	EBX_hi uint16
-	ECX_hi uint16
-	EDX_hi uint16
+	Mem   *Memory
+	Bus   Bus
+	FPU   FPU
+	Model Model
 
-	// Index and pointer registers (low 16 bits of 32-bit registers)
-	SI uint16 // Source Index (low 16 of ESI)
-	DI uint16 // Destination Index (low 16 of EDI)
-	BP uint16 // Base Pointer (low 16 of EBP)
-	SP uint16 // Stack Pointer (low 16 of ESP)
+	Halted    bool
+	Cycles    uint64
+	InsnCount uint64
 
-	// Upper halves for index/pointer 32-bit registers
-	ESI_hi uint16
-	EDI_hi uint16
-	EBP_hi uint16
-	ESP_hi uint16
+	// LastVector is the interrupt/exception vector taken during the last
+	// Step, or -1.
+	LastVector int
 
-	// FPU (x87 floating-point unit)
-	FPU FPU
+	// intInhibit is set after MOV SS / POP SS / STI so the following
+	// instruction executes before any interrupt is delivered.
+	intInhibit bool
 
-	// Segment registers
-	CS uint16 // Code Segment
-	DS uint16 // Data Segment
-	ES uint16 // Extra Segment
-	SS uint16 // Stack Segment
+	// PendingIRQ peeks at the interrupt controller: vector or -1.
+	PendingIRQ func() int
+	// AckIRQ tells the controller that the vector is being serviced.
+	AckIRQ func(vec int)
+	// BIOSCall is invoked for the reserved F1 <svc> trap when CS==0xF000.
+	BIOSCall func(c *CPU, svc byte)
+	// OnHalt is invoked when HLT executes (used to fast-forward clocks).
+	OnHalt func(c *CPU)
+	// Clock is advanced after every instruction with the cycle cost.
+	Clock func(cycles uint64)
 
-	// Instruction pointer
-	IP uint16
+	in insn
 
-	// Flags register
-	Flags Flags
+	// register snapshot taken at instruction start, restored on faults
+	snapRegs  [8]uint32
+	snapSegs  [6]uint16
+	snapFlags uint32
 
-	// Memory
-	Memory *Memory
-
-	// Halted state
-	Halted bool
-
-	// Mode 13h callback (called when graphics mode is activated)
-	Mode13hCallback func()
-
-	// Palette callback (called to set palette colors)
-	SetPaletteCallback func(index byte, r, g, b byte)
-
-	// VGA DAC state (for palette manipulation)
-	vgaDACWriteIndex uint8 // Port 0x3C8 - DAC write index
-	vgaDACReadIndex  uint8 // Port 0x3C7 - DAC read index
-	vgaDACState      uint8 // 0=R, 1=G, 2=B (which component we're writing)
-	vgaDACColorR     uint8 // Temporary storage for R component
-	vgaDACColorG     uint8 // Temporary storage for G component
-
-	// Keyboard state (for BIOS INT 16h)
-	keyboardScancode uint8 // Last key scancode
-	keyboardASCII    uint8 // Last key ASCII code
-	keyAvailable     bool  // True if a key is waiting to be read
-
-	// VBlank state (for VGA synchronization via port 0x3DA)
-	VBlankActive   bool          // Current VBlank state (bit 3 of port 0x3DA)
-	FrameCounter   uint64        // Frame counter for timing
-	vblankChan     chan struct{} // Channel to signal VBlank events
-	waitingVBlank  bool          // True if CPU is waiting for VBlank
-
-	// Text cursor state (for BIOS INT 10h text output)
-	cursorX    uint8 // Cursor column (0-39 for 8-pixel chars in 320-width mode)
-	cursorY    uint8 // Cursor row (0-12 for 16-pixel chars in 200-height mode)
-	textColor  uint8 // Current text color (palette index)
-	textScale  uint8 // Text scale factor (default 1)
-
-	// Stop channel for external termination signal
-	stopChan chan struct{}
-
-	// Performance metrics
-	InstructionCount uint64 // Total instructions executed
-	StartTime        int64  // Unix nano timestamp when execution started
+	stopped bool
 }
 
-// Flags represents CPU flags
-type Flags struct {
-	CF bool // Carry Flag
-	ZF bool // Zero Flag
-	SF bool // Sign Flag
-	OF bool // Overflow Flag
+// cpuException is panicked by raise() and recovered in execute().
+type cpuException struct{ vec uint8 }
+
+// raise aborts the current instruction with a fault. Registers are rolled
+// back to the instruction start and the exception is delivered via the IVT.
+func (c *CPU) raise(vec uint8) {
+	panic(cpuException{vec})
 }
 
-// NewCPU creates a new CPU instance
-func NewCPU() *CPU {
-	mem := NewMemory()
-	// Initialize BIOS ROM with CP437 font data
-	mem.InitializeBIOSROM()
+func (c *CPU) snapshot() {
+	c.snapRegs = c.Regs
+	c.snapSegs = c.Segs
+	c.snapFlags = c.Flags
+}
 
-	return &CPU{
-		Memory:     mem,
-		SP:         0xFFFE, // Stack grows downward from top of memory
-		CS:         0x0000, // Code segment starts at 0
-		DS:         0x0000, // Data segment starts at 0
-		ES:         0x0000, // Extra segment starts at 0
-		SS:         0x0000, // Stack segment starts at 0
-		stopChan:   make(chan struct{}),
-		vblankChan: make(chan struct{}, 1), // Buffered to prevent blocking
-		textScale:  1,                      // Default 1x text scale
-		cursorX:    0,                      // Start at top-left
-		cursorY:    0,
-		textColor:  15, // Default to white
+// limitCheck raises #GP (or #SS for the stack segment) when an access of
+// n bytes at off crosses the 64K real-mode segment limit.
+func (c *CPU) limitCheck(seg int, off uint32, n uint32) {
+	if off > 0xFFFF || off+n-1 > 0xFFFF {
+		if seg == SegSS {
+			c.raise(12)
+		}
+		c.raise(13)
 	}
 }
 
-// Reset resets the CPU to initial state
+func NewCPU(model Model) *CPU {
+	c := &CPU{Mem: NewMemory(), Bus: NullBus{}, Model: model}
+	c.Mem.A20 = model != Model8088
+	c.Reset()
+	return c
+}
+
 func (c *CPU) Reset() {
-	c.AX = 0
-	c.BX = 0
-	c.CX = 0
-	c.DX = 0
-	c.EAX_hi = 0
-	c.EBX_hi = 0
-	c.ECX_hi = 0
-	c.EDX_hi = 0
-	c.SI = 0
-	c.DI = 0
-	c.BP = 0
-	c.SP = 0xFFFE
-	c.ESI_hi = 0
-	c.EDI_hi = 0
-	c.EBP_hi = 0
-	c.ESP_hi = 0
-	c.CS = 0
-	c.DS = 0
-	c.ES = 0
-	c.SS = 0
-	c.IP = 0
-	c.Flags = Flags{}
-	c.FPU.Init()
+	c.Regs = [8]uint32{}
+	c.Segs = [6]uint16{}
+	c.Segs[SegCS] = 0xF000
+	c.EIP = 0xFFF0
+	c.Flags = 0x0002
 	c.Halted = false
-	c.Memory.Clear()
+	c.FPU.Init()
 }
 
-// 32-bit register accessors
-func (c *CPU) GetEAX() uint32 { return uint32(c.EAX_hi)<<16 | uint32(c.AX) }
-func (c *CPU) SetEAX(v uint32) { c.AX = uint16(v); c.EAX_hi = uint16(v >> 16) }
-func (c *CPU) GetEBX() uint32 { return uint32(c.EBX_hi)<<16 | uint32(c.BX) }
-func (c *CPU) SetEBX(v uint32) { c.BX = uint16(v); c.EBX_hi = uint16(v >> 16) }
-func (c *CPU) GetECX() uint32 { return uint32(c.ECX_hi)<<16 | uint32(c.CX) }
-func (c *CPU) SetECX(v uint32) { c.CX = uint16(v); c.ECX_hi = uint16(v >> 16) }
-func (c *CPU) GetEDX() uint32 { return uint32(c.EDX_hi)<<16 | uint32(c.DX) }
-func (c *CPU) SetEDX(v uint32) { c.DX = uint16(v); c.EDX_hi = uint16(v >> 16) }
-func (c *CPU) GetESI() uint32 { return uint32(c.ESI_hi)<<16 | uint32(c.SI) }
-func (c *CPU) SetESI(v uint32) { c.SI = uint16(v); c.ESI_hi = uint16(v >> 16) }
-func (c *CPU) GetEDI() uint32 { return uint32(c.EDI_hi)<<16 | uint32(c.DI) }
-func (c *CPU) SetEDI(v uint32) { c.DI = uint16(v); c.EDI_hi = uint16(v >> 16) }
-func (c *CPU) GetEBP() uint32 { return uint32(c.EBP_hi)<<16 | uint32(c.BP) }
-func (c *CPU) SetEBP(v uint32) { c.BP = uint16(v); c.EBP_hi = uint16(v >> 16) }
-func (c *CPU) GetESP() uint32 { return uint32(c.ESP_hi)<<16 | uint32(c.SP) }
-func (c *CPU) SetESP(v uint32) { c.SP = uint16(v); c.ESP_hi = uint16(v >> 16) }
+// ---- register accessors -------------------------------------------------
 
-// 32-bit flag helpers
-func (c *CPU) UpdateZeroFlag32(val uint32)  { c.Flags.ZF = (val == 0) }
-func (c *CPU) UpdateSignFlag32(val uint32)  { c.Flags.SF = (val & 0x80000000) != 0 }
-func (c *CPU) UpdateFlags32(val uint32) {
-	c.UpdateZeroFlag32(val)
-	c.UpdateSignFlag32(val)
-}
-
-// Push32 pushes a 32-bit value onto the stack
-func (c *CPU) Push32(val uint32) error {
-	if c.SP < 4 {
-		return fmt.Errorf("stack overflow")
+func (c *CPU) R8(i int) uint8 {
+	if i < 4 {
+		return uint8(c.Regs[i])
 	}
-	c.SP -= 4
-	addr := CalculateLinearAddress(c.SS, c.SP)
-	c.Memory.WriteDWordLinear(addr, val)
-	return nil
+	return uint8(c.Regs[i-4] >> 8)
 }
 
-// Pop32 pops a 32-bit value from the stack
-func (c *CPU) Pop32() (uint32, error) {
-	if c.SP > 0xFFFC {
-		return 0, fmt.Errorf("stack underflow")
-	}
-	addr := CalculateLinearAddress(c.SS, c.SP)
-	val := c.Memory.ReadDWordLinear(addr)
-	c.SP += 4
-	return val, nil
-}
-
-// GetAL returns the low byte of AX
-func (c *CPU) GetAL() uint8 {
-	return uint8(c.AX & 0xFF)
-}
-
-// SetAL sets the low byte of AX
-func (c *CPU) SetAL(val uint8) {
-	c.AX = (c.AX & 0xFF00) | uint16(val)
-}
-
-// GetAH returns the high byte of AX
-func (c *CPU) GetAH() uint8 {
-	return uint8((c.AX >> 8) & 0xFF)
-}
-
-// SetAH sets the high byte of AX
-func (c *CPU) SetAH(val uint8) {
-	c.AX = (c.AX & 0x00FF) | (uint16(val) << 8)
-}
-
-// GetBL returns the low byte of BX
-func (c *CPU) GetBL() uint8 {
-	return uint8(c.BX & 0xFF)
-}
-
-// SetBL sets the low byte of BX
-func (c *CPU) SetBL(val uint8) {
-	c.BX = (c.BX & 0xFF00) | uint16(val)
-}
-
-// GetBH returns the high byte of BX
-func (c *CPU) GetBH() uint8 {
-	return uint8((c.BX >> 8) & 0xFF)
-}
-
-// SetBH sets the high byte of BX
-func (c *CPU) SetBH(val uint8) {
-	c.BX = (c.BX & 0x00FF) | (uint16(val) << 8)
-}
-
-// GetCL returns the low byte of CX
-func (c *CPU) GetCL() uint8 {
-	return uint8(c.CX & 0xFF)
-}
-
-// SetCL sets the low byte of CX
-func (c *CPU) SetCL(val uint8) {
-	c.CX = (c.CX & 0xFF00) | uint16(val)
-}
-
-// GetCH returns the high byte of CX
-func (c *CPU) GetCH() uint8 {
-	return uint8((c.CX >> 8) & 0xFF)
-}
-
-// SetCH sets the high byte of CX
-func (c *CPU) SetCH(val uint8) {
-	c.CX = (c.CX & 0x00FF) | (uint16(val) << 8)
-}
-
-// GetDL returns the low byte of DX
-func (c *CPU) GetDL() uint8 {
-	return uint8(c.DX & 0xFF)
-}
-
-// SetDL sets the low byte of DX
-func (c *CPU) SetDL(val uint8) {
-	c.DX = (c.DX & 0xFF00) | uint16(val)
-}
-
-// GetDH returns the high byte of DX
-func (c *CPU) GetDH() uint8 {
-	return uint8((c.DX >> 8) & 0xFF)
-}
-
-// SetDH sets the high byte of DX
-func (c *CPU) SetDH(val uint8) {
-	c.DX = (c.DX & 0x00FF) | (uint16(val) << 8)
-}
-
-// Push pushes a 16-bit value onto the stack using SS:SP
-func (c *CPU) Push(val uint16) error {
-	if c.SP < 2 {
-		return fmt.Errorf("stack overflow")
-	}
-	c.SP -= 2
-	addr := CalculateLinearAddress(c.SS, c.SP)
-	c.Memory.WriteWordLinear(addr, val)
-	return nil
-}
-
-// Pop pops a 16-bit value from the stack using SS:SP
-func (c *CPU) Pop() (uint16, error) {
-	if c.SP > 0xFFFC {
-		return 0, fmt.Errorf("stack underflow")
-	}
-	addr := CalculateLinearAddress(c.SS, c.SP)
-	val := c.Memory.ReadWordLinear(addr)
-	c.SP += 2
-	return val, nil
-}
-
-// UpdateZeroFlag sets the zero flag based on the value
-func (c *CPU) UpdateZeroFlag(val uint16) {
-	c.Flags.ZF = (val == 0)
-}
-
-// UpdateSignFlag sets the sign flag based on the value (16-bit)
-func (c *CPU) UpdateSignFlag(val uint16) {
-	c.Flags.SF = (val&0x8000) != 0
-}
-
-// UpdateSignFlag8 sets the sign flag based on the value (8-bit)
-func (c *CPU) UpdateSignFlag8(val uint8) {
-	c.Flags.SF = (val&0x80) != 0
-}
-
-// UpdateFlags updates zero and sign flags based on the result
-func (c *CPU) UpdateFlags(val uint16) {
-	c.UpdateZeroFlag(val)
-	c.UpdateSignFlag(val)
-}
-
-// UpdateFlags8 updates zero and sign flags based on 8-bit result
-func (c *CPU) UpdateFlags8(val uint8) {
-	c.Flags.ZF = (val == 0)
-	c.UpdateSignFlag8(val)
-}
-
-// String returns a string representation of CPU state
-func (c *CPU) String() string {
-	return fmt.Sprintf("EAX:%08X EBX:%08X ECX:%08X EDX:%08X\n"+
-		"ESI:%08X EDI:%08X EBP:%08X ESP:%08X IP:%04X\n"+
-		"CS:%04X DS:%04X ES:%04X SS:%04X [%s%s%s%s]\n"+
-		"ST0:%.6g ST1:%.6g ST2:%.6g ST3:%.6g",
-		c.GetEAX(), c.GetEBX(), c.GetECX(), c.GetEDX(),
-		c.GetESI(), c.GetEDI(), c.GetEBP(), c.GetESP(), c.IP,
-		c.CS, c.DS, c.ES, c.SS,
-		flagStr("C", c.Flags.CF),
-		flagStr("Z", c.Flags.ZF),
-		flagStr("S", c.Flags.SF),
-		flagStr("O", c.Flags.OF),
-		c.FPU.ST0(), c.FPU.STn(1), c.FPU.STn(2), c.FPU.STn(3),
-	)
-}
-
-func flagStr(name string, set bool) string {
-	if set {
-		return name
-	}
-	return "-"
-}
-
-// GetPerformanceStats returns performance metrics
-func (c *CPU) GetPerformanceStats(currentTimeNano int64) (instructionsPerSec float64, totalInstructions uint64, elapsedSec float64) {
-	totalInstructions = c.InstructionCount
-	if c.StartTime == 0 {
-		return 0, totalInstructions, 0
-	}
-	elapsedNano := currentTimeNano - c.StartTime
-	elapsedSec = float64(elapsedNano) / 1e9
-	if elapsedSec > 0 {
-		instructionsPerSec = float64(totalInstructions) / elapsedSec
-	}
-	return instructionsPerSec, totalInstructions, elapsedSec
-}
-
-// OutByte handles OUT instruction - write byte to I/O port
-func (c *CPU) OutByte(port uint16, value uint8) {
-	switch port {
-	case 0x3C8: // DAC Write Index
-		c.vgaDACWriteIndex = value
-		c.vgaDACState = 0 // Reset to R component
-	case 0x3C9: // DAC Data
-		switch c.vgaDACState {
-		case 0: // Red component
-			c.vgaDACColorR = value
-			c.vgaDACState = 1
-		case 1: // Green component
-			c.vgaDACColorG = value
-			c.vgaDACState = 2
-		case 2: // Blue component
-			// We have all three components, update the palette
-			// Convert from 6-bit (0-63) to 8-bit (0-255)
-			// Use uint16 to avoid overflow, then convert back to uint8
-			r := uint8((uint16(c.vgaDACColorR&0x3F) * 255) / 63)
-			g := uint8((uint16(c.vgaDACColorG&0x3F) * 255) / 63)
-			b := uint8((uint16(value&0x3F) * 255) / 63)
-
-			if c.SetPaletteCallback != nil {
-				c.SetPaletteCallback(c.vgaDACWriteIndex, r, g, b)
-			}
-
-			// Move to next color index and reset to R component
-			c.vgaDACWriteIndex++
-			c.vgaDACState = 0
-		}
-	case 0x3C7: // DAC Read Index
-		c.vgaDACReadIndex = value
-		c.vgaDACState = 0
+func (c *CPU) SetR8(i int, v uint8) {
+	if i < 4 {
+		c.Regs[i] = c.Regs[i]&^0xFF | uint32(v)
+	} else {
+		c.Regs[i-4] = c.Regs[i-4]&^0xFF00 | uint32(v)<<8
 	}
 }
 
-// InByte handles IN instruction - read byte from I/O port
-func (c *CPU) InByte(port uint16) uint8 {
-	switch port {
-	case 0x3C7: // DAC State
-		// Return 0 to indicate DAC is ready
-		return 0
-	case 0x3C8: // DAC Write Index
-		return c.vgaDACWriteIndex
-	case 0x3C9: // DAC Data (read)
-		// For now, return 0 (proper implementation would read from palette)
-		return 0
-	case 0x3DA: // Input Status Register 1 (VGA status)
-		// Bit 3: Vertical retrace (VBlank) - 1 during VBlank, 0 otherwise
-		// Bit 0: Display enable (usually 1)
+func (c *CPU) R16(i int) uint16       { return uint16(c.Regs[i]) }
+func (c *CPU) SetR16(i int, v uint16) { c.Regs[i] = c.Regs[i]&^0xFFFF | uint32(v) }
+func (c *CPU) R32(i int) uint32       { return c.Regs[i] }
+func (c *CPU) SetR32(i int, v uint32) { c.Regs[i] = v }
 
-		// Wait for next VBlank signal from graphics loop
-		// This blocks the CPU until the next frame starts
-		select {
-		case <-c.vblankChan:
-			// VBlank occurred - frame sync
-			c.VBlankActive = true
-		case <-c.stopChan:
-			// CPU stopped
-		}
-
-		var status uint8 = 0x01 // Display enabled
-		if c.VBlankActive {
-			status |= 0x08 // Set bit 3
-		}
-		// Clear VBlank after reading
-		c.VBlankActive = false
-		return status
+// reg reads a general register at the given width (1, 2 or 4 bytes).
+func (c *CPU) reg(w int, i int) uint32 {
+	switch w {
+	case 1:
+		return uint32(c.R8(i))
+	case 2:
+		return uint32(c.R16(i))
 	default:
-		return 0
+		return c.Regs[i]
 	}
 }
 
-// SetKeyPress sets the keyboard state when a key is pressed
-// scancode is the BIOS scan code, ascii is the ASCII character
-func (c *CPU) SetKeyPress(scancode, ascii uint8) {
-	c.keyboardScancode = scancode
-	c.keyboardASCII = ascii
-	c.keyAvailable = true
+func (c *CPU) setReg(w int, i int, v uint32) {
+	switch w {
+	case 1:
+		c.SetR8(i, uint8(v))
+	case 2:
+		c.SetR16(i, uint16(v))
+	default:
+		c.Regs[i] = v
+	}
 }
 
-// SetVBlank sets the VBlank state for synchronization with the graphics loop
-// This is called by the graphics Update() method at the start of each frame
-func (c *CPU) SetVBlank(active bool) {
-	if active {
-		c.FrameCounter++
-		// Signal VBlank to waiting CPU (non-blocking)
-		select {
-		case c.vblankChan <- struct{}{}:
-		default:
-			// Channel full, skip (CPU not waiting yet)
+func (c *CPU) AX() uint16 { return uint16(c.Regs[RegAX]) }
+func (c *CPU) BX() uint16 { return uint16(c.Regs[RegBX]) }
+func (c *CPU) CX() uint16 { return uint16(c.Regs[RegCX]) }
+func (c *CPU) DX() uint16 { return uint16(c.Regs[RegDX]) }
+func (c *CPU) SP() uint16 { return uint16(c.Regs[RegSP]) }
+func (c *CPU) BP() uint16 { return uint16(c.Regs[RegBP]) }
+func (c *CPU) SI() uint16 { return uint16(c.Regs[RegSI]) }
+func (c *CPU) DI() uint16 { return uint16(c.Regs[RegDI]) }
+func (c *CPU) AL() uint8  { return uint8(c.Regs[RegAX]) }
+func (c *CPU) AH() uint8  { return uint8(c.Regs[RegAX] >> 8) }
+func (c *CPU) BL() uint8  { return uint8(c.Regs[RegBX]) }
+func (c *CPU) BH() uint8  { return uint8(c.Regs[RegBX] >> 8) }
+func (c *CPU) CL() uint8  { return uint8(c.Regs[RegCX]) }
+func (c *CPU) CH() uint8  { return uint8(c.Regs[RegCX] >> 8) }
+func (c *CPU) DL() uint8  { return uint8(c.Regs[RegDX]) }
+func (c *CPU) DH() uint8  { return uint8(c.Regs[RegDX] >> 8) }
+func (c *CPU) CS() uint16 { return c.Segs[SegCS] }
+func (c *CPU) DS() uint16 { return c.Segs[SegDS] }
+func (c *CPU) ES() uint16 { return c.Segs[SegES] }
+func (c *CPU) SS() uint16 { return c.Segs[SegSS] }
+func (c *CPU) IP() uint16 { return uint16(c.EIP) }
+
+func (c *CPU) SetAX(v uint16) { c.SetR16(RegAX, v) }
+func (c *CPU) SetBX(v uint16) { c.SetR16(RegBX, v) }
+func (c *CPU) SetCX(v uint16) { c.SetR16(RegCX, v) }
+func (c *CPU) SetDX(v uint16) { c.SetR16(RegDX, v) }
+func (c *CPU) SetSI(v uint16) { c.SetR16(RegSI, v) }
+func (c *CPU) SetDI(v uint16) { c.SetR16(RegDI, v) }
+func (c *CPU) SetBP(v uint16) { c.SetR16(RegBP, v) }
+func (c *CPU) SetSP(v uint16) { c.SetR16(RegSP, v) }
+func (c *CPU) SetAL(v uint8)  { c.SetR8(0, v) }
+func (c *CPU) SetAH(v uint8)  { c.SetR8(4, v) }
+func (c *CPU) SetBL(v uint8)  { c.SetR8(3, v) }
+func (c *CPU) SetBH(v uint8)  { c.SetR8(7, v) }
+func (c *CPU) SetCL(v uint8)  { c.SetR8(1, v) }
+func (c *CPU) SetCH(v uint8)  { c.SetR8(5, v) }
+func (c *CPU) SetDL(v uint8)  { c.SetR8(2, v) }
+func (c *CPU) SetDH(v uint8)  { c.SetR8(6, v) }
+func (c *CPU) SetIP(v uint16) { c.EIP = uint32(v) }
+
+func (c *CPU) GetFlag(f uint32) bool { return c.Flags&f != 0 }
+func (c *CPU) SetFlag(f uint32, on bool) {
+	if on {
+		c.Flags |= f
+	} else {
+		c.Flags &^= f
+	}
+}
+
+// ---- memory access through segments ------------------------------------
+
+func (c *CPU) lin(seg int, off uint32) uint32 {
+	return uint32(c.Segs[seg])<<4 + off
+}
+
+func (c *CPU) rd8(seg int, off uint32) uint8 {
+	if off > 0xFFFF {
+		c.limitCheck(seg, off, 1)
+	}
+	return c.Mem.Read8(c.lin(seg, off))
+}
+
+// Multi-byte accesses: the 8088 wraps offsets within the 64K segment;
+// the 386 raises #GP/#SS when an operand crosses the segment limit.
+func (c *CPU) rd16(seg int, off uint32) uint16 {
+	if off > 0xFFFE {
+		if c.Model == Model8088 {
+			return uint16(c.rd8(seg, off&0xFFFF)) | uint16(c.rd8(seg, (off+1)&0xFFFF))<<8
+		}
+		c.limitCheck(seg, off, 2)
+	}
+	return c.Mem.Read16(c.lin(seg, off))
+}
+
+func (c *CPU) rd32(seg int, off uint32) uint32 {
+	if off > 0xFFFC {
+		if c.Model == Model8088 {
+			return uint32(c.rd16(seg, off&0xFFFF)) | uint32(c.rd16(seg, (off+2)&0xFFFF))<<16
+		}
+		c.limitCheck(seg, off, 4)
+	}
+	return c.Mem.Read32(c.lin(seg, off))
+}
+
+func (c *CPU) wr8(seg int, off uint32, v uint8) {
+	if off > 0xFFFF {
+		c.limitCheck(seg, off, 1)
+	}
+	c.Mem.Write8(c.lin(seg, off), v)
+}
+
+func (c *CPU) wr16(seg int, off uint32, v uint16) {
+	if off > 0xFFFE {
+		if c.Model == Model8088 {
+			c.wr8(seg, off&0xFFFF, uint8(v))
+			c.wr8(seg, (off+1)&0xFFFF, uint8(v>>8))
+			return
+		}
+		c.limitCheck(seg, off, 2)
+	}
+	c.Mem.Write16(c.lin(seg, off), v)
+}
+
+func (c *CPU) wr32(seg int, off uint32, v uint32) {
+	if off > 0xFFFC {
+		if c.Model == Model8088 {
+			c.wr16(seg, off&0xFFFF, uint16(v))
+			c.wr16(seg, (off+2)&0xFFFF, uint16(v>>16))
+			return
+		}
+		c.limitCheck(seg, off, 4)
+	}
+	c.Mem.Write32(c.lin(seg, off), v)
+}
+
+func (c *CPU) rdw(w int, seg int, off uint32) uint32 {
+	switch w {
+	case 1:
+		return uint32(c.rd8(seg, off))
+	case 2:
+		return uint32(c.rd16(seg, off))
+	default:
+		return c.rd32(seg, off)
+	}
+}
+
+func (c *CPU) wrw(w int, seg int, off uint32, v uint32) {
+	switch w {
+	case 1:
+		c.wr8(seg, off, uint8(v))
+	case 2:
+		c.wr16(seg, off, uint16(v))
+	default:
+		c.wr32(seg, off, v)
+	}
+}
+
+// ---- stack --------------------------------------------------------------
+
+// stackMask: in real mode with a 16-bit stack, SP wraps at 64K.
+func (c *CPU) push16(v uint16) {
+	sp := uint16(c.Regs[RegSP]) - 2
+	c.wr16(SegSS, uint32(sp), v)
+	c.SetR16(RegSP, sp)
+}
+
+func (c *CPU) pop16() uint16 {
+	sp := uint16(c.Regs[RegSP])
+	v := c.rd16(SegSS, uint32(sp))
+	c.SetR16(RegSP, sp+2)
+	return v
+}
+
+func (c *CPU) push32(v uint32) {
+	sp := uint16(c.Regs[RegSP]) - 4
+	c.wr32(SegSS, uint32(sp), v)
+	c.SetR16(RegSP, sp)
+}
+
+func (c *CPU) pop32() uint32 {
+	sp := uint16(c.Regs[RegSP])
+	v := c.rd32(SegSS, uint32(sp))
+	c.SetR16(RegSP, sp+4)
+	return v
+}
+
+// push pushes at the current operand size.
+func (c *CPU) push(w int, v uint32) {
+	if w == 4 {
+		c.push32(v)
+	} else {
+		c.push16(uint16(v))
+	}
+}
+
+func (c *CPU) pop(w int) uint32 {
+	if w == 4 {
+		return c.pop32()
+	}
+	return uint32(c.pop16())
+}
+
+// Public helpers for the BIOS/DOS layers.
+func (c *CPU) Push16(v uint16) { c.push16(v) }
+func (c *CPU) Pop16() uint16   { return c.pop16() }
+
+// ---- instruction fetch --------------------------------------------------
+
+func (c *CPU) fetch8() uint8 {
+	if c.EIP > 0xFFFF {
+		if c.Model == Model8088 {
+			c.EIP &= 0xFFFF
+		} else {
+			c.raise(13)
 		}
 	}
+	v := c.Mem.Read8(uint32(c.Segs[SegCS])<<4 + c.EIP)
+	c.EIP++
+	return v
 }
 
-// Stop signals the CPU to stop execution
-// This is used to terminate infinite loops when the graphics window closes
-func (c *CPU) Stop() {
-	select {
-	case <-c.stopChan:
-		// Already stopped
+func (c *CPU) fetch16() uint16 {
+	lo := uint16(c.fetch8())
+	return lo | uint16(c.fetch8())<<8
+}
+
+func (c *CPU) fetch32() uint32 {
+	lo := uint32(c.fetch16())
+	return lo | uint32(c.fetch16())<<16
+}
+
+func (c *CPU) fetchImm(w int) uint32 {
+	switch w {
+	case 1:
+		return uint32(c.fetch8())
+	case 2:
+		return uint32(c.fetch16())
 	default:
-		close(c.stopChan)
+		return c.fetch32()
 	}
 }
 
-// drawCharToVGA draws a CP437 character directly to VGA memory
-// This is used by the INT 10h teletype function
-func (c *CPU) drawCharToVGA(char byte, x, y int, colorIndex byte, scale int) {
-	if scale < 1 {
-		scale = 1
-	}
+// ---- execution ----------------------------------------------------------
 
-	glyph := font.CP437Font[char]
+// Stop requests the run loop to exit.
+func (c *CPU) Stop()         { c.stopped = true }
+func (c *CPU) Stopped() bool { return c.stopped }
+func (c *CPU) ClearStop()    { c.stopped = false }
 
-	c.Memory.LockVGA()
-	defer c.Memory.UnlockVGA()
-
-	// Iterate through each row of the glyph
-	for row := 0; row < 16; row++ {
-		bits := glyph[row]
-
-		// Iterate through each pixel in the row (8 pixels)
-		for col := 0; col < 8; col++ {
-			// Check if bit is set (MSB is leftmost pixel)
-			if bits&(0x80>>col) != 0 {
-				// Draw scaled pixel
-				for sy := 0; sy < scale; sy++ {
-					for sx := 0; sx < scale; sx++ {
-						px := x + col*scale + sx
-						py := y + row*scale + sy
-
-						// Bounds check
-						if px >= 0 && px < 320 && py >= 0 && py < 200 {
-							c.Memory.SetVGAPixel(px, py, colorIndex)
-						}
-					}
+// Step executes one instruction (a REP string instruction counts as one,
+// unless interrupted by a pending IRQ) and then delivers a pending
+// hardware interrupt if IF permits.
+func (c *CPU) Step() error {
+	if c.Halted {
+		// Halted: only an interrupt can resume us.
+		if c.Flags&FlagIF != 0 && c.PendingIRQ != nil {
+			if v := c.PendingIRQ(); v >= 0 {
+				c.Halted = false
+				if c.AckIRQ != nil {
+					c.AckIRQ(v)
 				}
+				c.Interrupt(uint8(v))
+				return nil
 			}
 		}
+		if c.Clock != nil {
+			c.Clock(4)
+		}
+		c.Cycles += 4
+		return nil
 	}
+
+	inhibit := c.intInhibit
+	c.intInhibit = false
+
+	if c.Flags&FlagTF != 0 && !inhibit {
+		// Single-step trap after the previous instruction.
+		c.Interrupt(1)
+	}
+
+	c.LastVector = -1
+	start := c.EIP
+	if err := c.execute(); err != nil {
+		return err
+	}
+	c.InsnCount++
+	cyc := uint64(c.in.cycles)
+	if cyc == 0 {
+		cyc = 2
+	}
+	c.Cycles += cyc
+	if c.Clock != nil {
+		c.Clock(cyc)
+	}
+	_ = start
+
+	if !inhibit && !c.intInhibit && c.Flags&FlagIF != 0 && c.PendingIRQ != nil && !c.Halted {
+		if v := c.PendingIRQ(); v >= 0 {
+			if c.AckIRQ != nil {
+				c.AckIRQ(v)
+			}
+			c.Interrupt(uint8(v))
+		}
+	}
+	return nil
+}
+
+// Run executes until halted, stopped, or an emulator fault occurs.
+func (c *CPU) Run() error {
+	for !c.stopped {
+		if err := c.Step(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// RunCycles executes until at least n more cycles have elapsed.
+func (c *CPU) RunCycles(n uint64) error {
+	target := c.Cycles + n
+	for c.Cycles < target && !c.stopped {
+		if err := c.Step(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *CPU) fault(format string, args ...any) error {
+	return &Fault{CS: uint32(c.Segs[SegCS]), IP: c.in.start, Msg: fmt.Sprintf(format, args...)}
 }

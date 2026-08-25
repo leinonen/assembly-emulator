@@ -1,7 +1,11 @@
+; Ported to NASM syntax: assemble with `asm-emu asm` or run directly.
+org 100h
+bits 16
+
 ; FPU Plasma - sine table generated at runtime via x87 FPU
 ; Demonstrates: FSIN, FILD, FISTP, FLDPI, FADDP, FMULP, FDIVRP, FLD ST(i)
 
-.data
+section .data
     val_127    DW 127
     val_256    DW 256
     temp_w     DW 0        ; FPU fistp scratch during init; pixel accumulator during render
@@ -26,7 +30,7 @@
         DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
         DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
 
-.code
+section .text
 start:
     mov ax, 0x13
     int 0x10
@@ -59,7 +63,7 @@ gen_loop:
     faddp                   ; ST0=result, ST1=angle, ST2=step
     fistp word [si]         ; store to temp_w, pop
     mov al, [si]
-    mov [di], al
+    mov [es:di], al
     inc di
 
     fadd st1                ; angle += step
@@ -183,7 +187,15 @@ x_loop:
 
     ; VBlank sync, then blit backbuffer → VGA
     mov dx, 0x3DA
+    ; wait for the current vertical retrace to end, then for the next one to start
+.vs184a:
     in al, dx
+    test al, 8
+    jnz .vs184a
+.vs184b:
+    in al, dx
+    test al, 8
+    jz .vs184b
 
     mov ax, 0x7000
     mov ds, ax
@@ -207,4 +219,5 @@ x_loop:
     cmp al, 27
     jne main_loop
 
-    hlt
+    mov ax, 4C00h
+    int 21h

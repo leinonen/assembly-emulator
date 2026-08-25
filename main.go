@@ -1,195 +1,128 @@
+// Command asm-emu runs DOS .COM programs (and, once assembled, NASM-syntax
+// sources) on an emulated 386 PC with VGA graphics.
 package main
 
 import (
-	"assembly-emulator/assembler"
-	"assembly-emulator/emulator"
-	"assembly-emulator/graphics"
 	"flag"
 	"fmt"
 	"os"
-	"sync"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
+
+	"assembly-emulator/machine"
 )
 
+func usage() {
+	fmt.Fprintf(os.Stderr, `usage:
+  asm-emu run [flags] <file.com|file.asm> [args...]   run a program
+  asm-emu asm <file.asm> -o <file.com>                assemble to a .COM
+
+run flags:
+`)
+	flag.PrintDefaults()
+}
+
 func main() {
-	// Define command-line flags
-	gifOutput := flag.String("gif", "", "Output GIF file (enables headless recording mode)")
-	gifFrames := flag.Int("gif-frames", 90, "Number of frames to capture for GIF (default: 90 = 3 seconds at 30fps)")
-	flag.Parse()
+	if len(os.Args) < 2 {
+		usage()
+		os.Exit(2)
+	}
+	switch os.Args[1] {
+	case "run":
+		os.Exit(runCmd(os.Args[2:]))
+	case "asm":
+		os.Exit(asmCmd(os.Args[2:]))
+	default:
+		// Bare file argument: treat as "run".
+		os.Exit(runCmd(os.Args[1:]))
+	}
+}
 
-	// Check for assembly file argument
-	if flag.NArg() < 1 {
-		fmt.Fprintf(os.Stderr, "Usage: %s [options] <assembly-file.asm>\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "Example: %s examples/noise.asm\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "\nOptions:\n")
-		flag.PrintDefaults()
-		os.Exit(1)
+func runCmd(args []string) int {
+	fs := flag.NewFlagSet("run", flag.ExitOnError)
+	speed := fs.String("speed", "40", "CPU speed in MHz, or 'unlimited'")
+	headless := fs.Bool("headless", false, "run without a window")
+	maxInsns := fs.Uint64("max-insns", 0, "stop after this many instructions (0 = unlimited)")
+	gif := fs.String("gif", "", "record a GIF of the screen to this file")
+	gifFrames := fs.Int("gif-frames", 300, "number of frames to record with -gif")
+	trace := fs.Bool("stats", false, "print execution statistics on exit")
+	shot := fs.String("screenshot", "", "write the final screen to this PNG file")
+	fs.Usage = usage
+	fs.Parse(args)
+	if fs.NArg() < 1 {
+		usage()
+		return 2
+	}
+	path := fs.Arg(0)
+	tail := strings.Join(fs.Args()[1:], " ")
+	if tail != "" {
+		tail = " " + tail
 	}
 
-	asmFile := flag.Arg(0)
-
-	// Read assembly file
-	source, err := os.ReadFile(asmFile)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error reading file %s: %v\n", asmFile, err)
-		os.Exit(1)
-	}
-
-	fmt.Printf("Assembling %s...\n", asmFile)
-
-	// Assemble the code
-	lexer := assembler.NewLexer(string(source))
-	tokens, err := lexer.Tokenize()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Lexer error: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Preprocess constants
-	preprocessor := assembler.NewPreprocessor()
-	tokens, err = preprocessor.Process(tokens)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Preprocessor error: %v\n", err)
-		os.Exit(1)
-	}
-
-	parser := assembler.NewParser(tokens)
-	program, err := parser.Parse()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Parser error: %v\n", err)
-		os.Exit(1)
-	}
-
-	fmt.Printf("Assembly successful! Generated %d bytes of code, %d bytes of data.\n",
-		len(program.CodeBytes), len(program.DataBytes))
-
-	// Create CPU
-	cpu := emulator.NewCPU()
-
-	// Load code segment at address 0
-	codeBase := uint32(0)
-	cpu.Memory.LoadProgram(codeBase, program.CodeBytes)
-
-	// Load data segment after code (aligned to 16-byte paragraph boundary)
-	codeSize := uint32(len(program.CodeBytes))
-	dataBase := ((codeSize + 15) / 16) * 16 // Round up to next paragraph boundary
-	cpu.Memory.LoadProgram(dataBase, program.DataBytes)
-
-	// Set segment registers
-	cpu.CS = 0x0000 // Code starts at 0
-	if len(program.DataBytes) > 0 {
-		// Calculate data segment value: dataBase / 16 (convert linear address to segment)
-		cpu.DS = uint16(dataBase / 16)
-		cpu.ES = uint16(dataBase / 16)
-	}
-
-	// Stack segment: place after data
-	dataSize := uint32(len(program.DataBytes))
-	stackBase := dataBase + dataSize
-	stackBase = ((stackBase + 15) / 16) * 16 // Align to paragraph boundary
-	cpu.SS = uint16(stackBase / 16)
-	// SP is already initialized to 0xFFFE in NewCPU()
-
-	// Setup graphics initialization callback
-	var graphicsStarted bool
-	var graphicsMutex sync.Mutex
-	graphicsDone := make(chan struct{})
-	var vgaDisplay *graphics.VGADisplay
-
-	cpu.Mode13hCallback = func() {
-		graphicsMutex.Lock()
-		defer graphicsMutex.Unlock()
-		if !graphicsStarted {
-			graphicsStarted = true
-			fmt.Println("Mode 13h detected - initializing graphics...")
-
-			// Create VGA display immediately (before releasing mutex)
-			vgaDisplay = graphics.NewVGADisplay(cpu.Memory)
-
-			// Create keyboard callback
-			keyCallback := func(scancode, ascii uint8) {
-				cpu.SetKeyPress(scancode, ascii)
-			}
-
-			// Run graphics in goroutine
-			go func() {
-				// Check if GIF recording mode is enabled
-				if *gifOutput != "" {
-					fmt.Printf("Recording %d frames to %s...\n", *gifFrames, *gifOutput)
-					if err := graphics.RecordGIF(vgaDisplay, cpu, *gifOutput, *gifFrames); err != nil {
-						fmt.Fprintf(os.Stderr, "GIF recording error: %v\n", err)
-					}
-					close(graphicsDone)
-					cpu.Stop()
-				} else {
-					if err := graphics.RunGraphicsWithDisplay(vgaDisplay, cpu, keyCallback); err != nil {
-						fmt.Fprintf(os.Stderr, "Graphics error: %v\n", err)
-					}
-					close(graphicsDone)
-					// Signal CPU to stop when graphics window closes
-					cpu.Stop()
-				}
-			}()
-		}
-	}
-
-	// Setup palette manipulation callback
-	cpu.SetPaletteCallback = func(index byte, r, g, b byte) {
-		graphicsMutex.Lock()
-		defer graphicsMutex.Unlock()
-		if vgaDisplay != nil {
-			vgaDisplay.SetPaletteColor(index, r, g, b)
-		}
-	}
-
-	fmt.Println("Running program...")
-
-	// Set start time for performance metrics
-	cpu.StartTime = time.Now().UnixNano()
-
-	// Run the program
-	err = cpu.Run()
-
-	// Calculate performance statistics
-	ips, totalInst, elapsed := cpu.GetPerformanceStats(time.Now().UnixNano())
-
-	if err != nil {
-		// Check if it's a stop signal (not a real error)
-		if err.Error() != "CPU stopped by external signal" {
-			fmt.Fprintf(os.Stderr, "Runtime error: %v\n", err)
-			os.Exit(1)
-		}
-		// If stopped by external signal, this is normal (window closed)
-		fmt.Println("Program stopped (window closed).")
+	opts := machine.Options{Root: filepath.Dir(path), Stdout: os.Stdout, MaxInsns: *maxInsns}
+	if *speed == "unlimited" {
+		opts.Unlimited = true
 	} else {
-		fmt.Println("Program halted.")
-		fmt.Printf("Final CPU state: %s\n", cpu.String())
+		mhz, err := strconv.ParseFloat(*speed, 64)
+		if err != nil || mhz <= 0 {
+			fmt.Fprintf(os.Stderr, "invalid -speed %q\n", *speed)
+			return 2
+		}
+		opts.CPUHz = uint64(mhz * 1e6)
 	}
 
-	// Print performance statistics
-	if elapsed > 0 {
-		fmt.Printf("\nPerformance Statistics:\n")
-		fmt.Printf("  Total instructions: %d\n", totalInst)
-		fmt.Printf("  Elapsed time: %.2f seconds\n", elapsed)
-		fmt.Printf("  Instructions/second: %.0f (%.2f MHz equivalent)\n", ips, ips/1_000_000)
-		if cpu.FrameCounter > 0 {
-			fmt.Printf("  Frames rendered: %d\n", cpu.FrameCounter)
-			fmt.Printf("  Average FPS: %.1f\n", float64(cpu.FrameCounter)/elapsed)
-			fmt.Printf("  Instructions/frame: %.0f\n", float64(totalInst)/float64(cpu.FrameCounter))
-		}
+	image, err := loadProgram(path)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	m := machine.New(opts)
+	if err := m.LoadCOM(image, tail); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
 	}
 
-	// If graphics was started, wait for it to close
-	graphicsMutex.Lock()
-	if graphicsStarted {
-		graphicsMutex.Unlock()
-		// Only wait if we haven't already been stopped
-		if err == nil {
-			fmt.Println("Graphics window is open. Press ESC or close the window to exit.")
-			// Wait for graphics window to close
-			<-graphicsDone
-		}
-	} else {
-		graphicsMutex.Unlock()
+	var runErr error
+	switch {
+	case *gif != "":
+		runErr = recordGIF(m, *gif, *gifFrames)
+	case *headless:
+		runErr = m.Run()
+	default:
+		runErr = runWindow(m, filepath.Base(path))
 	}
+	if runErr != nil {
+		fmt.Fprintln(os.Stderr, "error:", runErr)
+	}
+	if *shot != "" {
+		m.ForceFrame()
+		if err := writeScreenshot(m, *shot); err != nil {
+			fmt.Fprintln(os.Stderr, "screenshot:", err)
+		}
+	}
+	if *trace {
+		secs := time.Since(startTime).Seconds()
+		fmt.Fprintf(os.Stderr, "\n%d instructions, %d cycles (%.2fs virtual), %.1f MIPS, video mode %02Xh, %d frames, CS:IP=%04X:%04X\n",
+			m.CPU.InsnCount, m.CPU.Cycles, float64(m.CPU.Cycles)/float64(m.Opts.CPUHz), float64(m.CPU.InsnCount)/secs/1e6, m.VGA.Mode, m.VGA.Frames, m.CPU.CS(), m.CPU.IP())
+	}
+	if runErr != nil {
+		return 1
+	}
+	return m.ExitCode()
+}
+
+var startTime = time.Now()
+
+// loadProgram returns the .COM image for a path, assembling sources.
+func loadProgram(path string) ([]byte, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	if strings.EqualFold(filepath.Ext(path), ".asm") {
+		return assembleSource(path, data)
+	}
+	return data, nil
 }

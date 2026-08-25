@@ -1,6 +1,10 @@
+; Ported to NASM syntax: assemble with `asm-emu asm` or run directly.
+org 100h
+bits 16
+
 ; Classic Plasma - Simple and effective
 
-.data
+section .data
 sine_table:
     db 127, 130, 133, 136, 139, 143, 146, 149, 152, 155, 158, 161, 164, 167, 170, 173
     db 176, 179, 182, 184, 187, 190, 193, 195, 198, 200, 203, 205, 208, 210, 213, 215
@@ -19,7 +23,7 @@ sine_table:
     db 37, 39, 41, 44, 46, 49, 51, 54, 56, 59, 61, 64, 67, 70, 72, 75
     db 78, 81, 84, 87, 90, 93, 96, 99, 102, 105, 108, 111, 115, 118, 121, 124
 
-.code
+section .text
 start:
     mov ax, 0x13
     int 0x10
@@ -123,7 +127,7 @@ x_loop:
     ; Combine waves using addition (classic plasma effect)
     add al, dh
 
-    ; mov [di], al
+    ; mov [es:di], al
     ; inc di
     stosb
 
@@ -137,7 +141,15 @@ x_loop:
 
     ; Wait for VBlank
     mov dx, 0x3DA
+    ; wait for the current vertical retrace to end, then for the next one to start
+.vs138a:
     in al, dx
+    test al, 8
+    jnz .vs138a
+.vs138b:
+    in al, dx
+    test al, 8
+    jz .vs138b
 
     ; Copy backbuffer to VGA memory
     mov ax, 0x7000
@@ -168,4 +180,5 @@ x_loop:
 
     mov ax, 0x03
     int 0x10
-    hlt
+    mov ax, 4C00h
+    int 21h

@@ -1,5 +1,9 @@
+; Ported to NASM syntax: assemble with `asm-emu asm` or run directly.
+org 100h
+bits 16
+
 ; Test double buffer - fill back buffer with color and copy to VGA
-.code
+section .text
     ; Set VGA Mode 13h
     mov ax, 0x13
     int 0x10
@@ -28,4 +32,5 @@
     mov ah, 0x00
     int 0x16
 
-    hlt
+    mov ax, 4C00h
+    int 21h

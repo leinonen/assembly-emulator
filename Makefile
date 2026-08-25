@@ -1,68 +1,36 @@
-.PHONY: build clean run test help
+.PHONY: build clean test test-full examples gifs run help
 
-# Binary name
 BINARY=asm-emu
+EXAMPLES=$(wildcard examples/*.asm)
+GIF_EXAMPLES=bouncing-line cube fire plasma sine_scroller starfield
 
-# Build the emulator
 build:
-	@echo "Building assembly emulator..."
-	go build -o $(BINARY)
-	@echo "Build complete: ./$(BINARY)"
+	go build -o $(BINARY) .
 
-# Clean build artifacts
 clean:
-	@echo "Cleaning..."
-	rm -f $(BINARY)
-	@echo "Clean complete"
+	rm -f $(BINARY) examples/*.com
 
-# Run a test program
-run:
-	@if [ -z "$(FILE)" ]; then \
-		echo "Usage: make run FILE=examples/pixels.asm"; \
-		exit 1; \
-	fi
-	./$(BINARY) $(FILE)
+# Unit tests, examples, corpus and a fast sample of the CPU suites.
+test:
+	go test ./...
 
-# Run all working examples as tests
-test: build
-	@echo "Testing simple.asm (headless)..."
-	@./$(BINARY) examples/simple.asm | grep -q "Program halted" && echo "✓ simple.asm works" || echo "✗ simple.asm failed"
-	@echo ""
-	@echo "Testing pixels.asm (graphics)..."
-	@timeout 2 ./$(BINARY) examples/pixels.asm 2>&1 | grep -q "Mode 13h detected" && echo "✓ pixels.asm works" || echo "✗ pixels.asm failed"
-	@pkill -9 asm-emu 2>/dev/null || true
-	@echo ""
-	@echo "All tests complete!"
+# Complete SingleStepTests runs (needs ~/.cache/asm-emu/singlestep, ~10 min).
+test-full:
+	SINGLESTEP_FULL=1 go test ./tests/singlestep
 
-# Install to system (optional)
-install: build
-	@echo "Installing to /usr/local/bin..."
-	sudo cp $(BINARY) /usr/local/bin/
-	@echo "Installed! You can now run: $(BINARY) <file.asm>"
+# Assemble every example to a .COM next to it.
+examples: build
+	@for f in $(EXAMPLES); do ./$(BINARY) asm $$f -o $${f%.asm}.com || exit 1; done
 
-# Uninstall from system
-uninstall:
-	@echo "Uninstalling from /usr/local/bin..."
-	sudo rm -f /usr/local/bin/$(BINARY)
-	@echo "Uninstalled"
+# Regenerate the example GIFs deterministically.
+gifs: build
+	@for n in $(GIF_EXAMPLES); do ./$(BINARY) run -gif examples/gifs/$$n.gif -gif-frames 100 examples/$$n.asm; done
 
-# Show help
+run: build
+	@if [ -z "$(FILE)" ]; then echo "Usage: make run FILE=examples/plasma.asm"; exit 1; fi
+	./$(BINARY) run $(FILE)
+
 help:
-	@echo "Assembly Emulator - Makefile"
-	@echo ""
-	@echo "Available targets:"
-	@echo "  make build       - Build the emulator (default)"
-	@echo "  make clean       - Remove build artifacts"
-	@echo "  make run FILE=   - Run a specific assembly file"
-	@echo "  make test        - Run tests with example files"
-	@echo "  make install     - Install to /usr/local/bin"
-	@echo "  make uninstall   - Remove from /usr/local/bin"
-	@echo "  make help        - Show this help message"
-	@echo ""
-	@echo "Examples:"
-	@echo "  make"
-	@echo "  make run FILE=examples/pixels.asm"
-	@echo "  make test"
+	@echo "make build | test | test-full | examples | gifs | run FILE=..."
 
-# Default target
 .DEFAULT_GOAL := build

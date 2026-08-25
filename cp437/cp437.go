@@ -1,4 +1,4 @@
-package graphics
+package cp437
 
 import "fmt"
 

@@ -1,236 +1,107 @@
-# Assembly Emulator
+# asm-emu — a DOS PC emulator with a built-in assembler
 
-A command-line x86 assembly emulator with VGA Mode 13h graphics support, written in Go.
+`asm-emu` runs real DOS `.COM` programs and NASM-syntax assembly sources on
+an emulated 386-class PC with VGA graphics, written in Go.
 
-A homage to the oldschool demoscene programming of the 90s, where cool graphics demos and effects were crafted in raw assembly language. Write retro VGA graphics programs just like the legends did!
+- **Accurate CPU**: real x86 machine code (8086 through 386 real mode, plus
+  the x87 FPU), validated instruction-by-instruction against the
+  hardware-generated [SingleStepTests](https://github.com/SingleStepTests)
+  suites (100% of the 8088 suite, 933/941 files of the 80386 suite; see
+  [docs/ACCURACY.md](docs/ACCURACY.md)).
+- **PC hardware**: PIT timer, PIC, keyboard controller, CMOS clock, and a
+  register-level VGA (text modes, CGA modes, EGA/VGA planar modes, mode 13h,
+  unchained "Mode X", DAC palette, real vertical/horizontal retrace timing on
+  port `3DAh`).
+- **BIOS and DOS**: INT 10h/11h/12h/13h/15h/16h/1Ah services, a BIOS data
+  area, an interrupt vector table you can hook (timer, keyboard, INT 1Ch),
+  and the common INT 21h calls (console, files, memory, time, vectors,
+  termination). Programs get a proper PSP, `CS=DS=ES=SS`, and `org 100h`.
+- **NASM-compatible assembler**: macros, conditionals, `%include`, `times`,
+  `$`/`$$`, local labels, full 16- and 32-bit addressing, all integer and
+  x87 instructions. Real-world sources such as
+  [fire-asm](https://github.com/runawaydevil/fire-asm) and the
+  [Memories](https://github.com/cesarmiquel/memories-256b-msdos-intro) intro
+  assemble byte-for-byte identical to NASM's output.
+- **Front end**: an [Ebiten](https://ebitengine.org) window with keyboard
+  input, plus headless runs, PNG screenshots and deterministic GIF
+  recording.
 
-## Quick Start
+## Build
 
-```bash
-make                              # Build
-./asm-emu examples/noise.asm      # Run (opens graphics window)
-make test                         # Test
+```
+go build -o asm-emu .
 ```
 
-Press **ESC** or close window to exit.
+## Run
 
-## Gallery
-
-<table>
-  <tr>
-    <td align="center">
-      <img src="examples/gifs/fire.gif" width="320" alt="Fire Effect"/><br/>
-      <b>Fire Effect</b><br/>
-      <code>examples/fire.asm</code>
-    </td>
-    <td align="center">
-      <img src="examples/gifs/plasma.gif" width="320" alt="Plasma"/><br/>
-      <b>Plasma</b><br/>
-      <code>examples/plasma.asm</code>
-    </td>
-  </tr>
-  <tr>
-    <td align="center">
-      <img src="examples/gifs/starfield.gif" width="320" alt="Starfield"/><br/>
-      <b>3D Starfield</b><br/>
-      <code>examples/starfield.asm</code>
-    </td>
-    <td align="center">
-      <img src="examples/gifs/sine_scroller.gif" width="320" alt="Sine Scroller"/><br/>
-      <b>Sine Scroller</b><br/>
-      <code>examples/sine_scroller.asm</code>
-    </td>
-  </tr>
-  <tr>
-    <td align="center">
-      <img src="examples/gifs/bouncing-line.gif" width="320" alt="Bouncing Line"/><br/>
-      <b>Bouncing Line</b><br/>
-      <code>examples/bouncing-line.asm</code>
-    </td>
-    <td align="center">
-      <img src="examples/gifs/cube.gif" width="320" alt="3D Wireframe Cube"/><br/>
-      <b>3D Wireframe Cube</b><br/>
-      <code>examples/cube.asm</code>
-    </td>
-  </tr>
-</table>
-
-## Usage
-
-```bash
-./asm-emu <file.asm>                           # Run with graphics window
-./asm-emu --gif output.gif <file.asm>          # Record to animated GIF
-./asm-emu --gif output.gif --gif-frames 60     # Shorter GIF (2 seconds)
+```
+asm-emu run examples/plasma.asm          # assemble and run a source file
+asm-emu run FIRE.COM                     # run a DOS .COM binary
+asm-emu asm examples/fire.asm -o fire.com [-l fire.lst]   # assemble only
 ```
 
-**Options:**
-- `--gif <file>` - Record output to animated GIF file (headless mode)
-- `--gif-frames <n>` - Number of frames to capture (default: 90 = 3 seconds at 30fps)
+Useful `run` flags:
 
-**Examples:**
-- `pixels.asm` (colored pixels)
-- `bars.asm` (color bars)
-- `noise.asm` (random pattern with looping until ESC pressed)
+| Flag | Meaning |
+|------|---------|
+| `-speed 40` | virtual CPU speed in MHz (default 40); `-speed unlimited` runs as fast as possible |
+| `-headless` | run without a window (console output goes to stdout) |
+| `-max-insns N` | stop after N instructions |
+| `-screenshot out.png` | write the final screen to a PNG |
+| `-gif out.gif -gif-frames 150` | record the display to an animated GIF (deterministic, no window) |
+| `-stats` | print instruction/cycle counts and the final CS:IP |
 
-## Assembly Syntax
+In the window, **F12** quits; all other keys are delivered to the program as
+PC scancodes (ESC included). Programs that `int 21h`/`4Ch` keep their final
+frame on screen until a key is pressed.
 
-```asm
-.code
-    MOV AX, 13h        ; Set VGA Mode 13h
-    INT 10h
+Files opened by the program are resolved inside the directory containing the
+program (drive letters are ignored, `..` is refused).
 
-    MOV AX, 0xA000     ; Set ES to VGA segment
-    MOV ES, AX
+## Writing programs
 
-    XOR DI, DI         ; DI = 0 (offset)
-    MOV AL, 4          ; Red color
-    MOV [ES:DI], AL    ; Write pixel to ES:DI (VGA memory)
-    HLT
+Sources use NASM syntax and are assembled as flat `.COM` binaries:
+
+```nasm
+org 100h
+    mov ax, 13h
+    int 10h
+    push 0A000h
+    pop es
+    xor di, di
+    mov cx, 64000
+    xor al, al
+.fill:
+    stosb
+    inc al
+    loop .fill
+    xor ah, ah
+    int 16h          ; wait for a key
+    mov ax, 4C00h
+    int 21h
 ```
 
-**Number formats:** `100` (decimal), `0x64` / `64h` (hex), `0A000h` (hex with letter)
+See [MANUAL.md](MANUAL.md) for the assembler reference, the supported
+instruction set, BIOS/DOS services and I/O ports, and the `examples/`
+directory for graphics demos (fire, plasma, starfield, 3D cube, sine
+scroller, FPU plasma, ...).
 
-**Memory:** `[BX]`, `[SI]`, `[DI+10]` - supports both byte and word operations
+![plasma](examples/gifs/plasma.gif) ![fire](examples/gifs/fire.gif)
 
-**Segment override:** `[ES:DI]`, `[DS:BX+4]` - explicit segment register prefix
+## Testing
 
-**Segments:** CS, DS, ES, SS - full x86 real mode segment support
-
-## VGA Programming
-
-**Mode 13h:** 320×200, 256 colors
-
-**Memory access:** VGA memory is at segment 0xA000 (linear address 0xA0000)
-
-```asm
-; Set ES to VGA segment
-MOV AX, 0xA000
-MOV ES, AX
-
-; Write pixel at position (X, Y)
-; Offset = Y * 320 + X
-MOV DI, 0           ; offset
-MOV AL, 15          ; white color
-MOV [DI], AL        ; writes to ES:DI
+```
+go test ./...                          # unit tests, examples, corpus (fast sample of SingleStepTests)
+SINGLESTEP_FULL=1 go test ./tests/singlestep   # the complete CPU suites (~10 min)
 ```
 
-**Colors 0-15:** Black, Blue, Green, Cyan, Red, Magenta, Brown, LightGray, DarkGray, LightBlue, LightGreen, LightCyan, LightRed, LightMagenta, Yellow, White
-
-### Palette Control
-
-Programs can customize the 256-color palette using VGA DAC ports:
-
-```asm
-; Set palette color 42 to bright purple (RGB: 63, 0, 63)
-MOV DX, 0x3C8      ; DAC write index port
-MOV AL, 42         ; Color index to modify
-OUT DX, AL
-
-MOV DX, 0x3C9      ; DAC data port
-MOV AL, 63         ; Red component (0-63)
-OUT DX, AL
-MOV AL, 0          ; Green component
-OUT DX, AL
-MOV AL, 63         ; Blue component
-OUT DX, AL
-```
-
-**Palette ports:**
-- `0x3C8`: DAC write index (set color to modify)
-- `0x3C9`: DAC data (write R, G, B in sequence, values 0-63)
-
-### Keyboard Input
-
-Programs can detect and read keyboard input via BIOS INT 16h:
-
-```asm
-main_loop:
-    ; ... render graphics ...
-
-    MOV AH, 0x01       ; Check for keystroke (non-destructive)
-    INT 0x16
-    JZ main_loop       ; ZF=1 means no key available
-
-    MOV AH, 0x00       ; Read keystroke
-    INT 0x16
-    ; Returns: AH = scan code, AL = ASCII character
-
-    CMP AL, 0x1B       ; Check if ESC key
-    JE exit_program
-    JMP main_loop
-
-exit_program:
-    HLT
-```
-
-**Supported keys:** ESC, Enter, Space, Backspace, A-Z (lowercase)
-
-## Supported Instructions
-
-**Data:** MOV, PUSH, POP, XCHG
-**Arithmetic:** ADD, SUB, MUL, DIV, IMUL, IDIV, INC, DEC, NEG
-**Logical:** AND, OR, XOR, NOT, SHL, SHR, SAL, SAR, ROL, ROR
-**Control:** CMP, TEST, JMP, JE/JZ, JNE/JNZ, JG, JGE, JL, JLE, JA, JAE, JB, JBE, CALL, RET, LOOP
-**I/O:** IN, OUT (for VGA palette control)
-**String:** MOVSB, MOVSW, STOSB, STOSW, LODSB, LODSW (with REP prefix)
-**Special:** INT 10h/16h/21h, NOP, HLT
-
-## Registers
-
-**General Purpose (16-bit):** AX, BX, CX, DX, SI, DI, BP, SP
-**General Purpose (8-bit):** AL/AH, BL/BH, CL/CH, DL/DH
-**Segment:** CS (Code), DS (Data), ES (Extra), SS (Stack)
-**Special:** IP (Instruction Pointer)
-**Flags:** CF, ZF, SF, OF
-
-## Memory Map
-
-**Total addressable memory:** 1MB (x86 real mode)
-
-**VGA Memory:** Linear address 0xA0000-0xAFFFF (64,000 bytes)
-- Access via segment 0xA000, offset 0x0000-0xF9FF
-- 320×200 pixels = 64,000 bytes
-
-**Segmentation:** Uses authentic x86 real mode addressing
-- Linear address = (segment << 4) + offset
-- All segments default to 0x0000 for backward compatibility
-
-## Features
-
-- **VGA Mode 13h graphics** - 320×200 resolution with 256-color palette
-- **x86 real mode segments** - Full CS, DS, ES, SS support with authentic addressing
-- **1MB addressable memory** - True 20-bit address space
-- **Customizable palette** - Modify colors via VGA DAC ports (0x3C8/0x3C9)
-- **Keyboard input** - INT 16h for interactive programs
-- **Window control** - Press ESC or close window to exit (works with infinite loops)
-- **Complete x86 instruction set** - Data movement, arithmetic, logic, control flow
-
-## Troubleshooting
-
-**Black screen:**
-- Set ES to 0xA000: `MOV AX, 0xA000; MOV ES, AX`
-- Use segment-based addressing: `MOV [DI], AL` writes to ES:DI
-- Ensure program stays in a loop (busy-wait on keyboard) for graphics to render
-
-**Won't assemble:** Use `h` suffix for hex starting with letters (`0A000h`)
-
-**Program won't exit:** Close the VGA window or press ESC - the emulator will terminate gracefully
+The CPU suites and the real-program corpus are optional test data; see
+[docs/ACCURACY.md](docs/ACCURACY.md) and `tests/corpus_test.go` for where to
+put them (`~/.cache/asm-emu/`).
 
 ## Limitations
 
-- 16-bit real mode only (no protected mode)
-- Limited instruction set (no advanced x86 instructions)
-- No FPU
-- INT 16h function 0x00 is non-blocking (use function 0x01 in a loop for keyboard waits)
-
-## Dependencies
-
-- **github.com/hajimehoshi/ebiten/v2**: Graphics rendering
-
-## About
-
-This is a weekend project built together with Claude Code - an exploration of x86 assembly, emulator development, and the joy of retro programming. Educational project for learning assembly and bringing back the magic of the demoscene era.
-
-## License
-
-MIT
+Real mode only (no protected mode, no EMS/XMS beyond the HMA), no sound
+output (the PIT speaker channel is modelled but silent), no mouse, no `.EXE`
+loader yet, no MASM/TASM syntax. Timing is a simple virtual clock, not
+cycle-accurate.

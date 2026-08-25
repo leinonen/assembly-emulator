@@ -1,7 +1,11 @@
+; Ported to NASM syntax: assemble with `asm-emu asm` or run directly.
+org 100h
+bits 16
+
 ; TV Static Noise - Segment-based version
 ; Fills the screen with pseudo-random greyscale pixels
 
-.code
+section .text
     ; Set VGA Mode 13h
     MOV AX, 13h
     INT 10h
@@ -95,7 +99,15 @@ pixel_loop:
     ; Wait for VBlank - this will block until next frame
     ; This prevents screen tearing by synchronizing with the display
     MOV DX, 0x3DA
-    IN AL, DX        ; Reading 0x3DA waits for VBlank via channel
+    ; wait for the current vertical retrace to end, then for the next one to start
+.vs96a:
+    in al, dx
+    test al, 8
+    jnz .vs96a
+.vs96b:
+    in al, dx
+    test al, 8
+    jz .vs96b
 
     ; DOUBLE BUFFER FLIP: Copy complete back buffer to VGA memory
     ; Source: back buffer at 0x7000 (DS is already set to this)
@@ -124,4 +136,5 @@ pixel_loop:
     CMP AL, 0x1B
     JNE frame_loop
 
-    HLT
+    mov ax, 4C00h
+    int 21h

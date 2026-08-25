@@ -1,7 +1,11 @@
+; Ported to NASM syntax: assemble with `asm-emu asm` or run directly.
+org 100h
+bits 16
+
 ; Color Bars
 ; Displays vertical color bars across the screen
 
-.code
+section .text
     ; Set VGA Mode 13h
     MOV AX, 13h
     INT 10h
@@ -41,4 +45,5 @@ bar_loop:
     CMP DI, 200
     JB row_loop
 
-    HLT
+    mov ax, 4C00h
+    int 21h

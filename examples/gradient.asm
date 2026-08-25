@@ -1,3 +1,7 @@
+; Ported to NASM syntax: assemble with `asm-emu asm` or run directly.
+org 100h
+bits 16
+
 ; Smooth Gradient Demo
 ; Creates a full 256-color palette and displays a smooth gradient
 
@@ -51,4 +55,5 @@ fill_row:
     CMP BL, 200  ; Only 200 rows
     JNE row_loop
 
-HLT
+mov ax, 4C00h
+int 21h

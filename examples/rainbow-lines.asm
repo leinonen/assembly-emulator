@@ -1,7 +1,11 @@
+; Ported to NASM syntax: assemble with `asm-emu asm` or run directly.
+org 100h
+bits 16
+
 ; Rainbow Lines - Draw 200 horizontal lines with different colors
 ; Demonstrates segment-based VGA programming
 
-.code
+section .text
     ; Set VGA Mode 13h
     MOV AX, 13h
     INT 10h
@@ -43,4 +47,5 @@ wait_loop:
     MOV AH, 0x00
     INT 0x16
 
-    HLT
+    mov ax, 4C00h
+    int 21h

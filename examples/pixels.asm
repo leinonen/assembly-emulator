@@ -1,7 +1,11 @@
+; Ported to NASM syntax: assemble with `asm-emu asm` or run directly.
+org 100h
+bits 16
+
 ; Simple pixel test for Mode 13h
 ; Writes a few colored pixels to verify VGA works
 
-.code
+section .text
     ; Set VGA Mode 13h (320x200, 256 colors)
     MOV AX, 13h
     INT 10h
@@ -31,4 +35,5 @@
     MOV AL, 15         ; White color (index 15)
     MOV [ES:BX], AL
 
-    HLT
+    mov ax, 4C00h
+    int 21h

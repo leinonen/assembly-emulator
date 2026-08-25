@@ -1,3 +1,7 @@
+; Ported to NASM syntax: assemble with `asm-emu asm` or run directly.
+org 100h
+bits 16
+
 ; Simple Color Test - Set bright colors and display them
 
 ; Set video mode 13h
@@ -96,4 +100,5 @@ fill4:
     INC DI
     LOOP fill4
 
-HLT
+mov ax, 4C00h
+int 21h

@@ -1,3 +1,7 @@
+; Ported to NASM syntax: assemble with `asm-emu asm` or run directly.
+org 100h
+bits 16
+
 ; Rainbow Palette Demo
 ; Creates a colorful palette and displays it
 
@@ -104,4 +108,5 @@ fill_row:
     POP CX
     LOOP fill_screen
 
-HLT
+mov ax, 4C00h
+int 21h

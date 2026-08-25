@@ -1,446 +1,286 @@
+// Package assembler is a NASM-compatible x86 assembler producing flat
+// binaries (the subset needed for DOS .COM programs: 16-bit code with
+// 386 instructions and x87).
 package assembler
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
-	"unicode"
 )
 
-// TokenType represents the type of token
-type TokenType int
+type tokKind int
 
 const (
-	TokenEOF TokenType = iota
-	TokenNewline
-	TokenLabel
-	TokenInstruction
-	TokenRegister
-	TokenNumber
-	TokenString
-	TokenComma
-	TokenColon
-	TokenLeftBracket
-	TokenRightBracket
-	TokenLeftParen
-	TokenRightParen
-	TokenPlus
-	TokenMinus
-	TokenMult
-	TokenDiv
-	TokenEquals
-	TokenDirective
-	TokenComment
+	tkEOF tokKind = iota
+	tkIdent
+	tkNumber     // integer literal (text kept for later parsing)
+	tkFloat      // floating-point literal
+	tkString     // quoted string; Text holds the raw contents, Quote the delimiter
+	tkPunct      // operators and punctuation
+	tkDollar     // $
+	tkDDollar    // $$
+	tkMacroParam // %1, %0, %+, %%name, %{...}
 )
 
-// Token represents a lexical token
-type Token struct {
-	Type   TokenType
-	Value  string
-	Line   int
-	Column int
+type token struct {
+	kind  tokKind
+	text  string
+	quote byte
+	line  int
+	col   int
+	// number value cache
+	num   int64
+	numOK bool
+	fval  float64
 }
 
-// Lexer tokenizes assembly source code
-type Lexer struct {
-	input  string
-	pos    int
-	line   int
-	column int
-	tokens []Token
-}
-
-// NewLexer creates a new lexer
-func NewLexer(input string) *Lexer {
-	return &Lexer{
-		input:  input,
-		pos:    0,
-		line:   1,
-		column: 1,
-		tokens: make([]Token, 0),
+func (t token) String() string {
+	switch t.kind {
+	case tkString:
+		return string(t.quote) + t.text + string(t.quote)
+	case tkEOF:
+		return "<eof>"
 	}
+	return t.text
 }
 
-// Tokenize converts the input into tokens
-func (l *Lexer) Tokenize() ([]Token, error) {
-	for l.pos < len(l.input) {
-		ch := l.current()
+func (t token) is(p string) bool { return t.kind == tkPunct && t.text == p }
+func (t token) isIdent(s string) bool {
+	return t.kind == tkIdent && strings.EqualFold(t.text, s)
+}
 
-		// Skip whitespace (except newlines)
-		if ch == ' ' || ch == '\t' || ch == '\r' {
-			l.advance()
-			continue
-		}
+type lexError struct {
+	line int
+	msg  string
+}
 
-		// Newline
-		if ch == '\n' {
-			l.addToken(TokenNewline, "\n")
-			l.line++
-			l.column = 1
-			l.advance()
-			continue
-		}
+func (e *lexError) Error() string { return fmt.Sprintf("line %d: %s", e.line, e.msg) }
 
-		// Comment
-		if ch == ';' {
-			l.skipComment()
-			continue
-		}
+var punct3 = []string{"<<=", ">>=", "<=>"}
+var punct2 = []string{"<<", ">>", "==", "!=", "<>", "<=", ">=", "&&", "||", "^^", "//", "%%", "$$"}
 
-		// Comma
-		if ch == ',' {
-			l.addToken(TokenComma, ",")
-			l.advance()
-			continue
-		}
-
-		// Colon
-		if ch == ':' {
-			l.addToken(TokenColon, ":")
-			l.advance()
-			continue
-		}
-
-		// Left bracket
-		if ch == '[' {
-			l.addToken(TokenLeftBracket, "[")
-			l.advance()
-			continue
-		}
-
-		// Right bracket
-		if ch == ']' {
-			l.addToken(TokenRightBracket, "]")
-			l.advance()
-			continue
-		}
-
-		// Plus
-		if ch == '+' {
-			l.addToken(TokenPlus, "+")
-			l.advance()
-			continue
-		}
-
-		// Minus (could be part of number)
-		if ch == '-' {
-			if l.peek() != 0 && unicode.IsDigit(rune(l.peek())) {
-				l.readNumber()
+// lexLine tokenises one source line (without the trailing newline).
+func lexLine(s string, line int) ([]token, error) {
+	var toks []token
+	i := 0
+	n := len(s)
+	for i < n {
+		c := s[i]
+		switch {
+		case c == ' ' || c == '\t' || c == '\r':
+			i++
+		case c == ';':
+			i = n
+		case c == '\'' || c == '"' || c == '`':
+			j := i + 1
+			for j < n && s[j] != c {
+				if c == '`' && s[j] == '\\' && j+1 < n {
+					j++
+				}
+				j++
+			}
+			if j >= n {
+				return nil, &lexError{line, "unterminated string"}
+			}
+			toks = append(toks, token{kind: tkString, text: s[i+1 : j], quote: c, line: line, col: i})
+			i = j + 1
+		case c == '$':
+			if i+1 < n && s[i+1] == '$' {
+				toks = append(toks, token{kind: tkDDollar, text: "$$", line: line, col: i})
+				i += 2
+			} else if i+1 < n && isHexDigit(s[i+1]) && looksLikeDollarHex(s[i+1:]) {
+				j := i + 1
+				for j < n && (isAlnum(s[j]) || s[j] == '_') {
+					j++
+				}
+				toks = append(toks, token{kind: tkNumber, text: s[i:j], line: line, col: i})
+				i = j
+			} else if i+1 < n && (isAlpha(s[i+1]) || s[i+1] == '_') {
+				// $name: identifier that would otherwise be a keyword
+				j := i + 1
+				for j < n && (isAlnum(s[j]) || s[j] == '_' || s[j] == '.' || s[j] == '@' || s[j] == '?' || s[j] == '#' || s[j] == '~') {
+					j++
+				}
+				toks = append(toks, token{kind: tkIdent, text: s[i+1 : j], line: line, col: i})
+				i = j
 			} else {
-				l.addToken(TokenMinus, "-")
-				l.advance()
+				toks = append(toks, token{kind: tkDollar, text: "$", line: line, col: i})
+				i++
 			}
-			continue
-		}
-
-		// Equals
-		if ch == '=' {
-			l.addToken(TokenEquals, "=")
-			l.advance()
-			continue
-		}
-
-		// Mult
-		if ch == '*' {
-			l.addToken(TokenMult, "*")
-			l.advance()
-			continue
-		}
-
-		// Div
-		if ch == '/' {
-			l.addToken(TokenDiv, "/")
-			l.advance()
-			continue
-		}
-
-		// Left parenthesis
-		if ch == '(' {
-			l.addToken(TokenLeftParen, "(")
-			l.advance()
-			continue
-		}
-
-		// Right parenthesis
-		if ch == ')' {
-			l.addToken(TokenRightParen, ")")
-			l.advance()
-			continue
-		}
-
-		// Number
-		if unicode.IsDigit(rune(ch)) || (ch == '0' && l.peek() == 'x') {
-			l.readNumber()
-			continue
-		}
-
-		// String
-		if ch == '"' || ch == '\'' {
-			if err := l.readString(); err != nil {
-				return nil, err
+		case c == '%':
+			// Macro parameter references inside macro bodies: %1, %0, %+,
+			// %%label, %{...}. At line start the preprocessor has already
+			// consumed directives.
+			if i+1 < n && (isDigit(s[i+1]) || s[i+1] == '+' || s[i+1] == '%' || s[i+1] == '{' || s[i+1] == '-' || s[i+1] == '$' || s[i+1] == '?' || s[i+1] == '[' || s[i+1] == '!') {
+				j := i + 1
+				switch s[j] {
+				case '{':
+					for j < n && s[j] != '}' {
+						j++
+					}
+					j++
+				case '[':
+					depth := 0
+					for j < n {
+						if s[j] == '[' {
+							depth++
+						} else if s[j] == ']' {
+							depth--
+							if depth == 0 {
+								j++
+								break
+							}
+						}
+						j++
+					}
+				case '+', '?':
+					j++
+				case '-':
+					j++
+					for j < n && isDigit(s[j]) {
+						j++
+					}
+				case '%', '$', '!':
+					j++
+					for j < n && (isAlnum(s[j]) || s[j] == '_' || s[j] == '.' || s[j] == '@' || s[j] == '?' || s[j] == '#') {
+						j++
+					}
+				default:
+					for j < n && isDigit(s[j]) {
+						j++
+					}
+				}
+				toks = append(toks, token{kind: tkMacroParam, text: s[i:j], line: line, col: i})
+				i = j
+			} else {
+				toks = append(toks, token{kind: tkPunct, text: "%", line: line, col: i})
+				i++
 			}
-			continue
-		}
-
-		// Identifier (instruction, register, label, directive)
-		if unicode.IsLetter(rune(ch)) || ch == '.' || ch == '_' {
-			l.readIdentifier()
-			continue
-		}
-
-		return nil, fmt.Errorf("unexpected character '%c' at line %d, column %d", ch, l.line, l.column)
-	}
-
-	l.addToken(TokenEOF, "")
-	return l.tokens, nil
-}
-
-func (l *Lexer) current() byte {
-	if l.pos >= len(l.input) {
-		return 0
-	}
-	return l.input[l.pos]
-}
-
-func (l *Lexer) peek() byte {
-	if l.pos+1 >= len(l.input) {
-		return 0
-	}
-	return l.input[l.pos+1]
-}
-
-func (l *Lexer) advance() {
-	if l.pos < len(l.input) {
-		l.pos++
-		l.column++
-	}
-}
-
-func (l *Lexer) addToken(tokenType TokenType, value string) {
-	l.tokens = append(l.tokens, Token{
-		Type:   tokenType,
-		Value:  value,
-		Line:   l.line,
-		Column: l.column,
-	})
-}
-
-func (l *Lexer) skipComment() {
-	for l.current() != '\n' && l.current() != 0 {
-		l.advance()
-	}
-}
-
-func (l *Lexer) readNumber() {
-	start := l.pos
-	startCol := l.column
-
-	// Handle negative sign
-	if l.current() == '-' {
-		l.advance()
-	}
-
-	// Hexadecimal (0x prefix)
-	if l.current() == '0' && (l.peek() == 'x' || l.peek() == 'X') {
-		l.advance() // 0
-		l.advance() // x
-		for unicode.IsDigit(rune(l.current())) || (l.current() >= 'a' && l.current() <= 'f') || (l.current() >= 'A' && l.current() <= 'F') {
-			l.advance()
-		}
-	} else if l.current() != 0 && unicode.IsDigit(rune(l.current())) {
-		// Could be decimal or hex with 'h' suffix
-		// First, read all hex digits
-		savedPos := l.pos
-		for unicode.IsDigit(rune(l.current())) || (l.current() >= 'a' && l.current() <= 'f') || (l.current() >= 'A' && l.current() <= 'F') {
-			l.advance()
-		}
-		// Check for 'h' suffix (indicates hexadecimal)
-		if l.current() == 'h' || l.current() == 'H' {
-			l.advance()
-		} else {
-			// No 'h' suffix, so it should be decimal only - rewind and read only digits
-			l.pos = savedPos
-			l.column = startCol + (l.pos - start)
-			for unicode.IsDigit(rune(l.current())) {
-				l.advance()
+		case isDigit(c) || (c == '.' && i+1 < n && isDigit(s[i+1])):
+			j := i
+			isFloat := false
+			for j < n && (isAlnum(s[j]) || s[j] == '_' || s[j] == '.') {
+				if s[j] == '.' {
+					isFloat = true
+				}
+				// exponent sign: 1.5e-3
+				if (s[j] == 'e' || s[j] == 'E') && isFloat && j+1 < n && (s[j+1] == '-' || s[j+1] == '+') {
+					j++
+				}
+				j++
+			}
+			txt := s[i:j]
+			if isFloat && !strings.HasPrefix(strings.ToLower(txt), "0x") {
+				toks = append(toks, token{kind: tkFloat, text: txt, line: line, col: i})
+			} else {
+				toks = append(toks, token{kind: tkNumber, text: txt, line: line, col: i})
+			}
+			i = j
+		case isAlpha(c) || c == '_' || c == '.' || c == '?' || c == '@':
+			j := i
+			for j < n && (isAlnum(s[j]) || s[j] == '_' || s[j] == '.' || s[j] == '@' || s[j] == '?' || s[j] == '#' || s[j] == '~' || s[j] == '$') {
+				j++
+			}
+			toks = append(toks, token{kind: tkIdent, text: s[i:j], line: line, col: i})
+			i = j
+		default:
+			matched := false
+			for _, p := range punct3 {
+				if strings.HasPrefix(s[i:], p) {
+					toks = append(toks, token{kind: tkPunct, text: p, line: line, col: i})
+					i += 3
+					matched = true
+					break
+				}
+			}
+			if matched {
+				continue
+			}
+			for _, p := range punct2 {
+				if strings.HasPrefix(s[i:], p) {
+					toks = append(toks, token{kind: tkPunct, text: p, line: line, col: i})
+					i += 2
+					matched = true
+					break
+				}
+			}
+			if matched {
+				continue
+			}
+			if strings.ContainsRune("+-*/%&|^~!()[],:<>=?", rune(c)) {
+				toks = append(toks, token{kind: tkPunct, text: string(c), line: line, col: i})
+				i++
+			} else {
+				return nil, &lexError{line, fmt.Sprintf("unexpected character %q", c)}
 			}
 		}
 	}
-
-	value := l.input[start:l.pos]
-	l.tokens = append(l.tokens, Token{
-		Type:   TokenNumber,
-		Value:  value,
-		Line:   l.line,
-		Column: startCol,
-	})
+	return toks, nil
 }
 
-func (l *Lexer) readString() error {
-	quote := l.current()
-	l.advance() // Skip opening quote
+func isDigit(c byte) bool    { return c >= '0' && c <= '9' }
+func isHexDigit(c byte) bool { return isDigit(c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F') }
+func isAlpha(c byte) bool    { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') }
+func isAlnum(c byte) bool    { return isAlpha(c) || isDigit(c) }
 
-	start := l.pos
-	for l.current() != quote && l.current() != 0 && l.current() != '\n' {
-		l.advance()
-	}
-
-	if l.current() != quote {
-		return fmt.Errorf("unterminated string at line %d", l.line)
-	}
-
-	value := l.input[start:l.pos]
-	l.advance() // Skip closing quote
-
-	l.addToken(TokenString, value)
-	return nil
+// looksLikeDollarHex: "$1F" is hex only if every char is a hex digit
+// (NASM: "$" followed by a digit means hex).
+func looksLikeDollarHex(s string) bool {
+	return isDigit(s[0])
 }
 
-func (l *Lexer) readIdentifier() {
-	start := l.pos
-	startCol := l.column
-
-	// Read identifier
-	for {
-		ch := l.current()
-		if ch == 0 {
-			break
+// parseNumber converts a NASM numeric literal to an integer.
+func parseNumber(txt string) (int64, error) {
+	t := strings.ReplaceAll(txt, "_", "")
+	if t == "" {
+		return 0, fmt.Errorf("bad number %q", txt)
+	}
+	lower := strings.ToLower(t)
+	base := 10
+	digits := lower
+	switch {
+	case strings.HasPrefix(lower, "0x"):
+		base, digits = 16, lower[2:]
+	case strings.HasPrefix(lower, "$"):
+		base, digits = 16, lower[1:]
+	case strings.HasPrefix(lower, "0h"):
+		base, digits = 16, lower[2:]
+	case strings.HasPrefix(lower, "0b"):
+		base, digits = 2, lower[2:]
+	case strings.HasPrefix(lower, "0y"):
+		base, digits = 2, lower[2:]
+	case strings.HasPrefix(lower, "0o") || strings.HasPrefix(lower, "0q"):
+		base, digits = 8, lower[2:]
+	case strings.HasPrefix(lower, "0d") || strings.HasPrefix(lower, "0t"):
+		base, digits = 10, lower[2:]
+	case strings.HasSuffix(lower, "h") || strings.HasSuffix(lower, "x"):
+		base, digits = 16, lower[:len(lower)-1]
+	case strings.HasSuffix(lower, "b") || strings.HasSuffix(lower, "y"):
+		base, digits = 2, lower[:len(lower)-1]
+	case strings.HasSuffix(lower, "o") || strings.HasSuffix(lower, "q"):
+		base, digits = 8, lower[:len(lower)-1]
+	case strings.HasSuffix(lower, "d") || strings.HasSuffix(lower, "t"):
+		base, digits = 10, lower[:len(lower)-1]
+	}
+	if digits == "" {
+		return 0, fmt.Errorf("bad number %q", txt)
+	}
+	var v uint64
+	for i := 0; i < len(digits); i++ {
+		c := digits[i]
+		var d int
+		switch {
+		case c >= '0' && c <= '9':
+			d = int(c - '0')
+		case c >= 'a' && c <= 'f':
+			d = int(c-'a') + 10
+		default:
+			return 0, fmt.Errorf("bad number %q", txt)
 		}
-		if !unicode.IsLetter(rune(ch)) && !unicode.IsDigit(rune(ch)) && ch != '_' && ch != '.' {
-			break
+		if d >= base {
+			return 0, fmt.Errorf("bad digit in number %q", txt)
 		}
-		l.advance()
+		v = v*uint64(base) + uint64(d)
 	}
-
-	value := l.input[start:l.pos]
-	valueUpper := strings.ToUpper(value)
-
-	// Determine token type
-	var tokenType TokenType
-
-	// Directive (starts with .)
-	if value[0] == '.' {
-		tokenType = TokenDirective
-	} else if isRegister(valueUpper) {
-		tokenType = TokenRegister
-	} else if isInstruction(valueUpper) {
-		// Check if this is followed by a colon - if so, it's a label, not an instruction
-		if l.current() == ':' {
-			tokenType = TokenLabel
-		} else {
-			tokenType = TokenInstruction
-		}
-	} else {
-		tokenType = TokenLabel
-	}
-
-	l.tokens = append(l.tokens, Token{
-		Type:   tokenType,
-		Value:  value,
-		Line:   l.line,
-		Column: startCol,
-	})
-}
-
-// ParseNumber parses a number token value, returning up to 32 bits
-func ParseNumber(value string) (uint16, error) {
-	n, err := ParseNumber32(value)
-	return uint16(n), err
-}
-
-// ParseNumber32 parses a number token value as a 32-bit value
-func ParseNumber32(value string) (uint32, error) {
-	value = strings.TrimSpace(value)
-
-	negative := false
-	if strings.HasPrefix(value, "-") {
-		negative = true
-		value = value[1:]
-	}
-
-	var num int64
-	var err error
-
-	if strings.HasPrefix(value, "0x") || strings.HasPrefix(value, "0X") {
-		num, err = strconv.ParseInt(value[2:], 16, 64)
-	} else if strings.HasSuffix(value, "h") || strings.HasSuffix(value, "H") {
-		num, err = strconv.ParseInt(value[:len(value)-1], 16, 64)
-	} else if strings.HasPrefix(value, "0b") || strings.HasPrefix(value, "0B") {
-		num, err = strconv.ParseInt(value[2:], 2, 64)
-	} else {
-		num, err = strconv.ParseInt(value, 10, 64)
-	}
-
-	if err != nil {
-		return 0, fmt.Errorf("invalid number: %s", value)
-	}
-
-	if negative {
-		num = -num
-	}
-
-	return uint32(num), nil
-}
-
-func isRegister(name string) bool {
-	registers := []string{
-		// 16-bit
-		"AX", "BX", "CX", "DX",
-		"AL", "AH", "BL", "BH", "CL", "CH", "DL", "DH",
-		"SI", "DI", "BP", "SP",
-		"IP", "FLAGS",
-		"ES", "CS", "SS", "DS",
-		// 32-bit
-		"EAX", "EBX", "ECX", "EDX", "ESI", "EDI", "EBP", "ESP",
-		// FPU stack registers
-		"ST0", "ST1", "ST2", "ST3", "ST4", "ST5", "ST6", "ST7", "ST",
-	}
-
-	for _, reg := range registers {
-		if name == reg {
-			return true
-		}
-	}
-	return false
-}
-
-func isInstruction(name string) bool {
-	instructions := []string{
-		"MOV", "PUSH", "POP", "XCHG",
-		"ADD", "SUB", "MUL", "DIV", "IMUL", "IDIV", "INC", "DEC", "NEG",
-		"AND", "OR", "XOR", "NOT",
-		"SHL", "SHR", "SAL", "SAR", "ROL", "ROR",
-		"CMP", "TEST",
-		"JMP", "JE", "JZ", "JNE", "JNZ",
-		"JG", "JNLE", "JGE", "JNL", "JL", "JNGE", "JLE", "JNG",
-		"JA", "JNBE", "JAE", "JNB", "JB", "JNAE", "JBE", "JNA",
-		"CALL", "RET",
-		"LOOP", "LOOPE", "LOOPZ", "LOOPNE", "LOOPNZ",
-		"INT", "NOP", "HLT",
-		"IN", "OUT",
-		"MOVSB", "MOVSW", "STOSB", "STOSW", "LODSB", "LODSW",
-		"REP",
-		"DB", "DW", "DD",
-		"BYTE", "WORD", "DWORD", "QWORD",
-		"EQU",
-		// FPU instructions
-		"FINIT", "FLDZ", "FLD1", "FLDPI",
-		"FCHS", "FABS", "FSQRT", "FSIN", "FCOS", "FPTAN", "FPATAN",
-		"FCOMPP",
-		"FADD", "FSUB", "FMUL", "FDIV",
-		"FADDP", "FSUBP", "FMULP", "FDIVP",
-		"FSUBR", "FDIVR", "FSUBRP", "FDIVRP",
-		"FLD", "FST", "FSTP",
-		"FILD", "FIST", "FISTP",
-		"FIADD", "FISUB", "FIMUL", "FIDIV",
-		"FXCH",
-		"FCOM", "FCOMP",
-	}
-
-	for _, instr := range instructions {
-		if name == instr {
-			return true
-		}
-	}
-	return false
+	return int64(v), nil
 }

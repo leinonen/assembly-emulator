@@ -1,17 +1,21 @@
+; Ported to NASM syntax: assemble with `asm-emu asm` or run directly.
+org 100h
+bits 16
+
 ; Starfield with Perspective Projection and Rotation
 ; 100 stars, depth-based brightness and size, rotating around Z-axis
 ;
 ; Memory layout in segment 0x7000:
 ; Offset 0-599: Star data (100 stars × 6 bytes: X, Y, Z as words)
 
-.data
+section .data
 ; Sine lookup table (256 entries, values 0-255, centered at 127)
 sine_table: db 127,130,133,136,139,142,145,148,151,154,157,160,163,166,169,172,175,178,181,184,187,190,193,196,199,202,205,208,211,214,217,219,222,225,228,231,233,236,239,241,244,247,249,252,254,255,255,255,255,255,255,255,254,252,249,247,244,241,239,236,233,231,228,225,222,219,217,214,211,208,205,202,199,196,193,190,187,184,181,178,175,172,169,166,163,160,157,154,151,148,145,142,139,136,133,130,127,124,121,118,115,112,109,106,103,100,97,94,91,88,85,82,79,76,73,70,67,64,61,58,55,52,49,46,43,40,37,35,32,29,26,23,21,18,15,13,10,7,5,2,0,0,0,0,0,0,0,0,2,5,7,10,13,15,18,21,23,26,29,32,35,37,40,43,46,49,52,55,58,61,64,67,70,73,76,79,82,85,88,91,94,97,100,103,106,109,112,115,118,121,124
 
 ; PRNG seed (persisted across function calls)
 prng_seed: dw 12345
 
-.code
+section .text
 start:
     ; Initialize PRNG seed in memory
     push ax
@@ -340,7 +344,8 @@ bright_ok2:
 
 next_star:
     pop cx
-    loop star_loop
+    dec cx
+    jnz star_loop
 
     pop es
     pop ds

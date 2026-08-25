@@ -1,5 +1,9 @@
+; Ported to NASM syntax: assemble with `asm-emu asm` or run directly.
+org 100h
+bits 16
+
 ; Classic Fire Effect - Double Buffered (Demoscene Style)
-.code
+section .text
     ; Set VGA Mode 13h
     mov ax, 0x13
     int 0x10
@@ -113,7 +117,7 @@ main_loop:
         add al, 192       ; 192-255
 
         write_198:
-        mov [di], al
+        mov [es:di], al
         inc di
         loop fill_line_198
 
@@ -146,7 +150,7 @@ main_loop:
         add al, 192       ; 192-255
 
         write_199:
-        mov [di], al
+        mov [es:di], al
         inc di
         loop fill_line_199
 
@@ -175,19 +179,19 @@ main_loop:
             xor ax, ax
 
             ; Pixel [x-1, y+1] = di + 319
-            mov al, [di + 319]
+            mov al, [es:di+ 319]
 
             ; Pixel [x, y+1] = di + 320
             xor dx, dx
-            mov dl, [di + 320]
+            mov dl, [es:di+ 320]
             add ax, dx
 
             ; Pixel [x+1, y+1] = di + 321
-            mov dl, [di + 321]
+            mov dl, [es:di+ 321]
             add ax, dx
 
             ; Pixel [x, y+2] = di + 640
-            mov dl, [di + 640]
+            mov dl, [es:di+ 640]
             add ax, dx
 
             ; Divide by 4
@@ -199,7 +203,7 @@ main_loop:
             dec ax
 
             write_pixel:
-            mov [di], al
+            mov [es:di], al
             inc di
             loop propagate_pixels
 
@@ -221,7 +225,15 @@ main_loop:
         ; Wait for VBlank - this will block until next frame
         ; Ensures smooth 60 FPS animation without tearing
         mov dx, 0x3DA
-        in al, dx        ; Reading 0x3DA waits for VBlank via channel
+        ; wait for the current vertical retrace to end, then for the next one to start
+.vs222a:
+        in al, dx
+        test al, 8
+        jnz .vs222a
+.vs222b:
+        in al, dx
+        test al, 8
+        jz .vs222b
 
         ; DOUBLE BUFFER FLIP: Copy complete back buffer to VGA memory
         ; This is the classic demoscene technique - atomic page flip!
@@ -253,4 +265,5 @@ main_loop:
         jmp main_loop
 
     exit_program:
-        hlt
+        mov ax, 4C00h
+        int 21h

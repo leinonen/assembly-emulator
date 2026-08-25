@@ -1,8 +1,12 @@
+; Ported to NASM syntax: assemble with `asm-emu asm` or run directly.
+org 100h
+bits 16
+
 ; CP437 Text Rendering Demo in VGA Mode 13h
 ; This program demonstrates text rendering with CP437 characters
 ; including box-drawing characters
 
-.data
+section .data
 ; Demo text using CP437 box-drawing chars (now with readable string literals!)
 msg:
     db "Mode 13h CP437 demo:", 13, 10
@@ -10,7 +14,7 @@ msg:
     db "║ Hello world! ║", 13, 10
     db "╚══════════════╝", 0
 
-.code
+section .text
 start:
     ; Switch to 320x200x256 (mode 13h)
     mov ax, 0x13
@@ -36,4 +40,5 @@ waitkey:
     ; Back to text mode
     mov ax, 0x03
     int 0x10
-    hlt
+    mov ax, 4C00h
+    int 21h
