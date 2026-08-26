@@ -23,6 +23,8 @@ sine_table:
     db 37, 39, 41, 44, 46, 49, 51, 54, 56, 59, 61, 64, 67, 70, 72, 75
     db 78, 81, 84, 87, 90, 93, 96, 99, 102, 105, 108, 111, 115, 118, 121, 124
 
+wave1: times 320 db 0
+
 section .text
 start:
     mov ax, 0x13
@@ -73,70 +75,65 @@ pal:
 main_loop:
     ; Render to backbuffer at 0x7000:0
     push ds                 ; Save data segment (for sine table access later)
+    mov bx, sine_table      ; XLAT base (index in AL, so the &0xFF mask is free)
+
+    ; Wave 1 depends only on X and time: build a 320-entry row table once
+    ; per frame.  wave1[x] = sin(x + x/2 + time*2)
+    mov di, wave1
+    xor cx, cx
+    mov dx, bp
+    add dx, bp              ; time * 2
+w1_loop:
+    mov ax, cx
+    shr ax, 1
+    add ax, cx              ; X + X/2
+    add ax, dx
+    xlat
+    mov [di], al
+    inc di
+    inc cx
+    cmp cx, 320
+    jl w1_loop
+
     mov ax, 0x7000
     mov es, ax
     xor di, di
-    xor bx, bx
+    xor cx, cx              ; CX = Y
 
 y_loop:
-    xor cx, cx
+    push cx
 
-x_loop:
-    ; Wave 1: sin(x + x/2 + time*2)
+    ; Wave 2 is constant along a row: sin(y + y/2 + time*3) -> DH
     mov ax, cx
-    mov dx, ax
-    shr dx, 1           ; X/2 in DX
-    add ax, dx          ; X + X/2
-    mov dx, bp
-    add dx, bp          ; time * 2 in DX
-    add ax, dx
-    and ax, 0xFF        ; Mask to get 0-255
-    mov si, sine_table
-    add si, ax
-    mov al, [si]
+    shr ax, 1
+    add ax, cx              ; Y + Y/2
+    add ax, bp
+    add ax, bp
+    add ax, bp              ; + time * 3
+    xlat
     mov dh, al
 
-    ; Wave 2: sin(y + y/2 + time*3)
-    mov ax, bx
-    push dx
-    mov dx, ax
-    shr dx, 1           ; Y/2 in DX
-    add ax, dx          ; Y + Y/2
-    pop dx
-    push dx
-    mov dx, bp
-    add dx, bp
-    add dx, bp          ; time * 3 in DX
-    add ax, dx
-    pop dx
-    and ax, 0xFF        ; Mask to get 0-255
-    mov si, sine_table
-    add si, ax
-    mov al, [si]
-    add dh, al
-
-    ; Wave 3: sin(x+y + time)
+    ; Wave 3: sin(x + y + time) -- index just increments with X, keep it in DL
     mov ax, cx
-    add ax, bx
     add ax, bp
-    and ax, 0xFF        ; Mask to get 0-255
-    mov si, sine_table
-    add si, ax
-    mov al, [si]
+    mov dl, al
 
-    ; Combine waves using addition (classic plasma effect)
-    add al, dh
-
-    ; mov [es:di], al
-    ; inc di
+    mov si, wave1
+    mov cx, 320
+x_loop:
+    lodsb                   ; wave 1 for this X
+    mov ah, al
+    mov al, dl
+    xlat                    ; wave 3
+    add al, ah
+    add al, dh              ; + wave 2
     stosb
+    inc dl
+    loop x_loop
 
+    pop cx
     inc cx
-    cmp cx, 320
-    jl x_loop
-
-    inc bx
-    cmp bx, 200
+    cmp cx, 200
     jl y_loop
 
     ; Wait for VBlank
