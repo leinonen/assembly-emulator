@@ -266,10 +266,13 @@ func (as *Assembler) sizeData(it *item) (int64, error) {
 			}
 			continue
 		}
-		if len(arg) == 1 && arg[0].kind == tkFloat {
+		if ft, neg, ok := floatArg(arg); ok {
 			var f float64
-			if _, err := fmt.Sscanf(arg[0].text, "%g", &f); err != nil {
-				return 0, as.errorf(it.line, "bad float %q", arg[0].text)
+			if _, err := fmt.Sscanf(ft.text, "%g", &f); err != nil {
+				return 0, as.errorf(it.line, "bad float %q", ft.text)
+			}
+			if neg {
+				f = -f
 			}
 			switch d.width {
 			case 4:
@@ -358,4 +361,16 @@ func encodeF80(v float64) (mant uint64, se uint16) {
 	default:
 		return 1<<63 | frac<<11, sign | uint16(exp-1023+16383)
 	}
+}
+
+// floatArg recognises a floating-point data operand: a float literal with an
+// optional unary sign (NASM accepts `dq -2.5`).
+func floatArg(arg []token) (tok token, neg, ok bool) {
+	switch {
+	case len(arg) == 1 && arg[0].kind == tkFloat:
+		return arg[0], false, true
+	case len(arg) == 2 && arg[0].kind == tkPunct && (arg[0].text == "-" || arg[0].text == "+") && arg[1].kind == tkFloat:
+		return arg[1], arg[0].text == "-", true
+	}
+	return token{}, false, false
 }

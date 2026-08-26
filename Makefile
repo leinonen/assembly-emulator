@@ -2,7 +2,7 @@
 
 BINARY=asm-emu
 EXAMPLES=$(wildcard examples/*.asm)
-GIF_EXAMPLES=bouncing-line cube fire plasma sine_scroller starfield
+GIF_EXAMPLES=bouncing-line cube fire plasma rotozoom sine_scroller starfield tunnel
 
 build:
 	go build -o $(BINARY) .

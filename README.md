@@ -82,11 +82,23 @@ org 100h
 ```
 
 See [MANUAL.md](MANUAL.md) for the assembler reference, the supported
-instruction set, BIOS/DOS services and I/O ports, and the `examples/`
-directory for graphics demos (fire, plasma, starfield, 3D cube, sine
-scroller, FPU plasma, ...).
+instruction set, BIOS/DOS services and I/O ports.
 
-![plasma](examples/gifs/plasma.gif) ![fire](examples/gifs/fire.gif)
+## Examples
+
+The `examples/` directory holds mode 13h demos; run any of them with
+`asm-emu run examples/<name>.asm` (ESC quits).
+
+| | |
+|---|---|
+| **[plasma](examples/plasma.asm)** — classic plasma from a sine table<br>![plasma](examples/gifs/plasma.gif) | **[fire](examples/fire.asm)** — demoscene fire, DAC palette via 3C8h/3C9h<br>![fire](examples/gifs/fire.gif) |
+| **[tunnel](examples/tunnel.asm)** — x87-built angle/depth tables (FPATAN, FSQRT)<br>![tunnel](examples/gifs/tunnel.gif) | **[rotozoom](examples/rotozoom.asm)** — 8.8 fixed-point rotating, zooming texture<br>![rotozoom](examples/gifs/rotozoom.gif) |
+| **[cube](examples/cube.asm)** — rotating 3D wireframe cube<br>![cube](examples/gifs/cube.gif) | **[starfield](examples/starfield.asm)** — perspective starfield with rotation<br>![starfield](examples/gifs/starfield.gif) |
+| **[sine_scroller](examples/sine_scroller.asm)** — text on a sine wave using the BIOS font<br>![sine_scroller](examples/gifs/sine_scroller.gif) | **[bouncing-line](examples/bouncing-line.asm)** — Bresenham line, double buffer + VSync<br>![bouncing-line](examples/gifs/bouncing-line.gif) |
+
+Others without a GIF: `mandelbrot` (x87, FCOMP/FSTSW/SAHF), `fpu_plasma`
+(FSIN-generated table), `noise`, `gradient`, `rainbow`, `palette`,
+`cp437_13h`, and a few small pixel/buffer sanity tests.
 
 ## Testing
 

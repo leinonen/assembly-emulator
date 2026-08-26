@@ -136,6 +136,7 @@ func TestEncodings(t *testing.T) {
 		{"db 'AB',0\ndb \"C\"", "41 42 00 43"},
 		{"dw 'ab'", "61 62"},
 		{"dd 1.0\ndq 1.0", "00 00 80 3F 00 00 00 00 00 00 F0 3F"},
+		{"dq -2.5\ndd +1.5", "00 00 00 00 00 00 04 C0 00 00 C0 3F"},
 		{"msg db 'hi$'\nlen equ $-msg\ndb len", "68 69 24 03"},
 		{"org 100h\nstart: mov dx,msg\nmsg db 'x'", "BA 03 01 78"},
 		{"times 4 db 0", "00 00 00 00"},
