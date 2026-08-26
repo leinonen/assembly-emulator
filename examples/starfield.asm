@@ -166,12 +166,11 @@ init_loop:
     pop ax
     ret
 
-; Simple PRNG (Linear Congruential Generator)
+; PRNG: 16-bit xorshift (period 65535, all bits of good quality)
 ; Seed stored in memory at 0x0500 (safe DOS memory area)
 ; Output: AL = random byte
 prng:
     push bx
-    push dx
     push ds
     push si
 
@@ -180,21 +179,22 @@ prng:
     mov ds, ax
     mov si, 0x0500      ; Seed stored at 0x0000:0x0500
 
-    ; Load seed from memory
-    mov dx, [si]
-    mov ax, dx
-
-    ; AX = (AX * 25173 + 13849) & 0xFFFF
-    mov bx, 25173
-    mul bx              ; DX:AX = AX * 25173
-    add ax, 13849
-
-    ; Save new seed back to memory
+    mov ax, [si]
+    mov bx, ax
+    shl bx, 7
+    xor ax, bx          ; x ^= x << 7
+    mov bx, ax
+    shr bx, 9
+    xor ax, bx          ; x ^= x >> 9
+    mov bx, ax
+    shl bx, 8
+    xor ax, bx          ; x ^= x << 8
     mov [si], ax
+
+    xor al, ah          ; fold both halves into the returned byte
 
     pop si
     pop ds
-    pop dx
     pop bx
     ret
 
@@ -397,8 +397,11 @@ move_loop:
     xor ah, ah
     mov [si+2], ax      ; Store new Y
 
-    ; Reset Z to far (match new Z range 128-384)
-    mov ax, 350
+    ; Reset Z to a random far depth (320-383) so stars don't respawn in a plane
+    call prng
+    xor ah, ah
+    shr ax, 2
+    add ax, 320
     jmp store_z
 
 no_wrap:
