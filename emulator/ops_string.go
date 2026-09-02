@@ -71,6 +71,7 @@ func (c *CPU) stringOp(op byte) error {
 			c.flagsSub(w, c.reg(w, RegAX), b, 0)
 			addDI()
 		case 0x6C, 0x6D: // INS
+			in.cycles += c.IOCycles
 			var v uint32
 			switch w {
 			case 1:
@@ -83,6 +84,7 @@ func (c *CPU) stringOp(op byte) error {
 			c.wrw(w, SegES, getDI(), v)
 			addDI()
 		case 0x6E, 0x6F: // OUTS
+			in.cycles += c.IOCycles
 			v := c.rdw(w, srcSeg, getSI())
 			switch w {
 			case 1:

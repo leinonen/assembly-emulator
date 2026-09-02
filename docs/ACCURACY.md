@@ -74,3 +74,24 @@ Things the emulator does because the hardware traces showed them:
   converted on load/store. Denormals and exceptions are not modelled
   (all exceptions masked).
 - A20 is enabled by default so the HMA is reachable (as with HIMEM.SYS).
+- Port I/O (`IN`/`OUT`/`INS`/`OUTS`) costs about 1 µs of virtual time when
+  run through `machine` (ISA wait states); the raw CPU used by the test
+  suites charges nothing extra.
+
+## Sound
+
+The OPL2 is a practical two-operator FM model, not a bit-exact YM3812:
+
+- The log-sine and exponent tables are computed from their formulas rather
+  than copied from the chip ROMs, so samples differ in the low bits.
+- Envelope rates follow the data sheet timings (96 dB of decay in 39.3 s at
+  rate 4, halving every four rate steps; attack 2.83 s at rate 4) instead of
+  the exact rate counter; the attack curve is an approximation.
+- Envelopes and LFOs are clocked at the 48 kHz output rate, about 3.5%
+  slower than the chip's 49716 Hz; pitch is exact.
+- Rhythm mode (register BDh bit 5) is stored but channels 6-8 stay melodic;
+  CSW/NTS (register 08h) are ignored; the IRQ line is not wired.
+- Timer flags become visible when the CPU next advances the clock, so they
+  can be up to 1 ms late while the CPU is halted.
+- The PC speaker is an ideal square wave through a one-pole low-pass;
+  bit-banged PWM playback is only reproduced at instruction granularity.

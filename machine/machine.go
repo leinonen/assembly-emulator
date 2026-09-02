@@ -37,8 +37,13 @@ type Machine struct {
 	KBD  *emio.Keyboard
 	VGA  *emio.VGA
 	CMOS *emio.CMOS
-	BIOS *bios.BIOS
-	DOS  *dos.DOS
+	OPL  *emio.OPL2    // AdLib FM synthesiser at 388h/389h
+	Spk  *emio.Speaker // PC speaker driven by PIT channel 2
+	// Sound mixes the OPL2 and speaker into samples; front ends Enable it
+	// and drain it, headless runs leave it idle.
+	Sound *emio.Mixer
+	BIOS  *bios.BIOS
+	DOS   *dos.DOS
 
 	// RenderFrames enables rendering a frame snapshot at every vertical
 	// retrace (front ends set this; headless runs skip the cost).
@@ -63,6 +68,7 @@ func New(opts Options) *Machine {
 	}
 	m := &Machine{Opts: opts}
 	m.CPU = emulator.NewCPU(emulator.Model386)
+	m.CPU.IOCycles = int(opts.CPUHz / 1_000_000) // ~1 us per port access (ISA wait states)
 	m.Mem = m.CPU.Mem
 	m.Bus = emio.NewBus()
 	m.CPU.Bus = m.Bus
@@ -73,6 +79,9 @@ func New(opts Options) *Machine {
 	m.KBD.SetA20(&m.Mem.A20)
 	m.VGA = emio.NewVGA(opts.CPUHz)
 	m.CMOS = emio.NewCMOS()
+	m.OPL = emio.NewOPL2(opts.CPUHz, emio.SampleRate)
+	m.Spk = emio.NewSpeaker(m.PIT, emio.SampleRate)
+	m.Sound = emio.NewMixer(m.OPL, m.Spk, opts.CPUHz, emio.SampleRate)
 	m.CMOS.Clock = func() (int, int, int) {
 		t := opts.Clock()
 		return t.Hour(), t.Minute(), t.Second()
@@ -91,6 +100,8 @@ func New(opts Options) *Machine {
 	m.Bus.Map(0x80, 0x8F, emio.Stub{}) // DMA pages / POST
 	m.Bus.Map(0xC0, 0xDF, emio.Stub{})
 	m.Bus.Map(0x201, 0x201, emio.Stub{Value: 0xF0}) // joystick: none
+	m.Bus.Map(0x388, 0x389, m.OPL)                  // AdLib
+	m.Bus.Map(0x228, 0x229, m.OPL)                  // Sound Blaster FM alias
 
 	m.Mem.MMIORead = m.VGA.Read
 	m.Mem.MMIOWrite = m.VGA.Write
@@ -131,6 +142,8 @@ func (m *Machine) advance(cycles uint64) {
 	m.PIT.Advance(cycles)
 	m.KBD.Advance(cycles)
 	m.VGA.Advance(cycles)
+	m.OPL.Advance(cycles)
+	m.Sound.Advance(cycles)
 }
 
 // onHalt fast-forwards the clocks to the next timer or retrace event
@@ -218,6 +231,9 @@ func (m *Machine) idle() error {
 	}
 	n := m.PIT.NextEventCycles()
 	if v := m.VGA.CyclesToVBlank(); v < n {
+		n = v
+	}
+	if v := m.OPL.NextEventCycles(); v < n {
 		n = v
 	}
 	if n == 0 {

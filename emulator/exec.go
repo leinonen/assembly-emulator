@@ -460,12 +460,16 @@ func (c *CPU) execE(op byte) error {
 			c.jumpRel(d)
 		}
 	case 0xE4:
+		in.cycles += c.IOCycles
 		c.SetAL(c.Bus.In8(uint16(c.fetch8())))
 	case 0xE5:
+		in.cycles += c.IOCycles
 		c.setReg(w, RegAX, c.inw(w, uint16(c.fetch8())))
 	case 0xE6:
+		in.cycles += c.IOCycles
 		c.Bus.Out8(uint16(c.fetch8()), c.AL())
 	case 0xE7:
+		in.cycles += c.IOCycles
 		c.outw(w, uint16(c.fetch8()), c.reg(w, RegAX))
 	case 0xE8: // CALL rel
 		var d int32
@@ -494,12 +498,16 @@ func (c *CPU) execE(op byte) error {
 		d := int32(int8(c.fetch8()))
 		c.jumpRel(d)
 	case 0xEC:
+		in.cycles += c.IOCycles
 		c.SetAL(c.Bus.In8(c.DX()))
 	case 0xED:
+		in.cycles += c.IOCycles
 		c.setReg(w, RegAX, c.inw(w, c.DX()))
 	case 0xEE:
+		in.cycles += c.IOCycles
 		c.Bus.Out8(c.DX(), c.AL())
 	case 0xEF:
+		in.cycles += c.IOCycles
 		c.outw(w, c.DX(), c.reg(w, RegAX))
 	case 0xF4:
 		c.Halted = true

@@ -38,6 +38,8 @@ func Run(m *machine.Machine, title string) error {
 	ebiten.SetWindowSize(320*Scale, 200*Scale)
 	ebiten.SetWindowResizingMode(ebiten.WindowResizingModeEnabled)
 	ebiten.SetScreenClearedEveryFrame(false)
+	stopAudio := startAudio(m)
+	defer stopAudio()
 	go func() {
 		err := m.Run()
 		g.mu.Lock()

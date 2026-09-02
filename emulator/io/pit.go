@@ -227,14 +227,13 @@ func (c *pitChannel) load(_ int) {
 	}
 }
 
-// SpeakerOn reports whether the speaker is being driven by channel 2.
-func (p *PIT) SpeakerOn() bool { return p.gate2 && p.spkData }
-
-// SpeakerFreq returns the channel 2 frequency in Hz (0 if not running).
-func (p *PIT) SpeakerFreq() float64 {
-	r := uint64(p.ch[2].reload)
+// SpeakerState returns the speaker inputs: the channel 2 gate and data
+// bits of port 61h, the channel 2 reload value (0 means 65536) and whether
+// the channel is in a square-wave mode (2 or 3).
+func (p *PIT) SpeakerState() (gate, data bool, reload uint32, square bool) {
+	r := uint32(p.ch[2].reload)
 	if r == 0 {
 		r = 0x10000
 	}
-	return float64(PITClock) / float64(r)
+	return p.gate2, p.spkData, r, p.ch[2].mode == 2 || p.ch[2].mode == 3
 }

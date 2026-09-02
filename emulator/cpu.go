@@ -96,6 +96,11 @@ type CPU struct {
 	Cycles    uint64
 	InsnCount uint64
 
+	// IOCycles is the extra cost of every port access (IN/OUT/INS/OUTS),
+	// modelling ISA bus wait states. Zero for the raw CPU test suites; the
+	// machine sets it to about 1 us of its clock.
+	IOCycles int
+
 	// LastVector is the interrupt/exception vector taken during the last
 	// Step, or -1.
 	LastVector int

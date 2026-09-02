@@ -12,7 +12,9 @@ NASM sources run unchanged.
   panic/recover with register rollback), `exec.go` + `ops_*.go` (one-byte and
   `0F` opcodes), `fpu*.go` (x87), `memory.go` (1 MB + HMA, A20, MMIO hook).
   `Model8088`/`Model386` switch the few places where the chips differ.
-- `emulator/io/` devices: PIT, PIC, 8042 keyboard, CMOS, VGA (registers,
+- `emulator/io/` devices: PIT, PIC, 8042 keyboard, CMOS, OPL2 (`opl2.go`,
+  AdLib FM synth + timers), speaker (`speaker.go`, from PIT channel 2), a
+  cycle-driven `mixer.go` (48 kHz, ring buffer + tap), VGA (registers,
   planar memory, CRT timing, renderer to RGBA).
 - `emulator/bios/` BIOS in ROM at F000: stubs are real x86 that trap to Go
   with `F1 <svc>` (ICEBP, only honoured when CS=F000) so hooked/chained
@@ -21,7 +23,9 @@ NASM sources run unchanged.
 - `loader/` .COM loader. `machine/` wires everything, virtual-clock throttle.
 - `assembler/` NASM-compatible assembler (lexer, preprocessor, expr, parser,
   operand, table, encoder, only-grow relaxation).
-- `graphics/` Ebiten window, scancode keymap, GIF recorder. `cp437/`, `font/`.
+- `graphics/` Ebiten window, scancode keymap, GIF recorder, and `audio.go`
+  (the only Ebiten-audio import; feeds the mixer to a player). `cp437/`,
+  `font/`.
 - `tests/singlestep/` SingleStepTests harness; `tests/corpus_test.go` runs
   every example and the real-program corpus.
 

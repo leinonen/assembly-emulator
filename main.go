@@ -49,6 +49,7 @@ func runCmd(args []string) int {
 	gifFrames := fs.Int("gif-frames", 300, "number of frames to record with -gif")
 	trace := fs.Bool("stats", false, "print execution statistics on exit")
 	shot := fs.String("screenshot", "", "write the final screen to this PNG file")
+	wav := fs.String("wav", "", "write the audio output to this WAV file (mono 16-bit 48 kHz)")
 	fs.Usage = usage
 	fs.Parse(args)
 	if fs.NArg() < 1 {
@@ -84,6 +85,13 @@ func runCmd(args []string) int {
 		return 1
 	}
 
+	var wavOut *wavSink
+	if *wav != "" {
+		wavOut = newWAVSink()
+		m.Sound.Tap = wavOut.Tap
+		m.Sound.Enable(0)
+	}
+
 	var runErr error
 	switch {
 	case *gif != "":
@@ -95,6 +103,11 @@ func runCmd(args []string) int {
 	}
 	if runErr != nil {
 		fmt.Fprintln(os.Stderr, "error:", runErr)
+	}
+	if wavOut != nil {
+		if err := wavOut.WriteFile(*wav); err != nil {
+			fmt.Fprintln(os.Stderr, "wav:", err)
+		}
 	}
 	if *shot != "" {
 		m.ForceFrame()

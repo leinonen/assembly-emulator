@@ -12,6 +12,9 @@ an emulated 386-class PC with VGA graphics, written in Go.
   register-level VGA (text modes, CGA modes, EGA/VGA planar modes, mode 13h,
   unchained "Mode X", DAC palette, real vertical/horizontal retrace timing on
   port `3DAh`).
+- **Sound**: an AdLib-compatible OPL2 (Yamaha YM3812) FM synthesiser on
+  ports `388h`/`389h` and the PC speaker (PIT channel 2 / port `61h`), mixed
+  at 48 kHz into the window's audio output or a `-wav` file.
 - **BIOS and DOS**: INT 10h/11h/12h/13h/15h/16h/1Ah services, a BIOS data
   area, an interrupt vector table you can hook (timer, keyboard, INT 1Ch),
   and the common INT 21h calls (console, files, memory, time, vectors,
@@ -49,6 +52,7 @@ Useful `run` flags:
 | `-max-insns N` | stop after N instructions |
 | `-screenshot out.png` | write the final screen to a PNG |
 | `-gif out.gif -gif-frames 150` | record the display to an animated GIF (deterministic, no window) |
+| `-wav out.wav` | write the audio output (mono 16-bit 48 kHz) to a WAV file; works headless and with `-gif` |
 | `-stats` | print instruction/cycle counts and the final CS:IP |
 
 In the window, **F12** quits; all other keys are delivered to the program as
@@ -95,6 +99,7 @@ The `examples/` directory holds mode 13h demos; run any of them with
 | **[tunnel](examples/tunnel.asm)** — x87-built angle/depth tables (FPATAN, FSQRT)<br>![tunnel](examples/gifs/tunnel.gif) | **[rotozoom](examples/rotozoom.asm)** — 8.8 fixed-point rotating, zooming texture<br>![rotozoom](examples/gifs/rotozoom.gif) |
 | **[cube](examples/cube.asm)** — rotating 3D wireframe cube<br>![cube](examples/gifs/cube.gif) | **[starfield](examples/starfield.asm)** — perspective starfield with rotation<br>![starfield](examples/gifs/starfield.gif) |
 | **[sine_scroller](examples/sine_scroller.asm)** — text on a sine wave using the BIOS font<br>![sine_scroller](examples/gifs/sine_scroller.gif) | **[bouncing-line](examples/bouncing-line.asm)** — Bresenham line, double buffer + VSync<br>![bouncing-line](examples/gifs/bouncing-line.gif) |
+| **[cracktro](examples/cracktro.asm)** — crack intro: DAC copper bars, starfield, typewriter pages, sine scroller and a three-channel AdLib (OPL2) tune<br>![cracktro](examples/gifs/cracktro.gif) | |
 
 Others without a GIF: `mandelbrot` (x87, FCOMP/FSTSW/SAHF), `fpu_plasma`
 (FSIN-generated table), `noise`, `gradient`, `rainbow`, `palette`,
@@ -113,7 +118,7 @@ put them (`~/.cache/asm-emu/`).
 
 ## Limitations
 
-Real mode only (no protected mode, no EMS/XMS beyond the HMA), no sound
-output (the PIT speaker channel is modelled but silent), no mouse, no `.EXE`
+Real mode only (no protected mode, no EMS/XMS beyond the HMA), no Sound
+Blaster digital audio (only the OPL2 and the speaker), no mouse, no `.EXE`
 loader yet, no MASM/TASM syntax. Timing is a simple virtual clock, not
 cycle-accurate.

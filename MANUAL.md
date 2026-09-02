@@ -112,7 +112,8 @@ past a 64K segment limit.
 | Program load | PSP at segment 0800h (`int 20h` at offset 0, top-of-memory at 2, command tail at 80h); image at PSP:0100; `CS=DS=ES=SS=PSP`, `SP=FFFEh` with 0 pushed; free memory up to 9FC0h |
 | Video | VGA: modes 00-03 (text), 04-06 (CGA), 07 (mono text), 0D/0E/10/12 (planar 16-colour), 13h (320x200x256); unchained "Mode X" via the sequencer/CRTC registers; text framebuffer at B800:0000 |
 | Keyboard | 8042 at ports 60h/64h with scancode set 1 make/break codes and typematic repeat; INT 9 fills the BIOS 16-key buffer |
-| Timer | 8254 PIT at 1.193182 MHz; channel 0 raises IRQ 0 (INT 8, 18.2 Hz by default), channel 2 is the (silent) speaker |
+| Timer | 8254 PIT at 1.193182 MHz; channel 0 raises IRQ 0 (INT 8, 18.2 Hz by default), channel 2 drives the speaker |
+| Sound | AdLib OPL2 (YM3812) at ports 388h/389h (also 228h/229h), PC speaker from PIT channel 2 / port 61h; mixed at 48 kHz to the window's audio output or `-wav` |
 | Exit | `int 20h`, `int 21h/4Ch`, `int 21h/00h`, or `ret` with the pushed 0 (returns to PSP:0000 → `int 20h`) |
 
 ## BIOS services
@@ -163,7 +164,7 @@ directory; `\` and `/` are both accepted.
 | 20h/21h, A0h/A1h | 8259 PIC (mask, EOI, ICW init) |
 | 40h-43h | 8254 PIT (all read/write modes, latch, read-back) |
 | 60h, 64h | keyboard controller (scancodes, A20 via output port) |
-| 61h | speaker gate / refresh toggle bit |
+| 61h | speaker gate and data bits (audible), channel 2 output, refresh toggle bit |
 | 70h/71h | CMOS RTC |
 | 92h | fast A20 gate |
 | 3C0h/3C1h | attribute controller (flip-flop reset by reading 3DAh) |
@@ -173,8 +174,11 @@ directory; `\` and `/` are both accepted.
 | 3CEh/3CFh | graphics controller (set/reset, read map, write modes 0-3, bit mask, memory map) |
 | 3D4h/3D5h (3B4h/3B5h) | CRTC (start address, cursor position/shape, offset, line compare, vertical display end) |
 | 3DAh (3BAh) | input status 1: bit 3 = vertical retrace, bit 0 = display disabled (horizontal or vertical blanking) |
+| 388h/389h, 228h/229h | AdLib OPL2: index/status and data (timers, status bits 5-7, the standard detection sequence) |
 
-Unmapped ports read `FFh`.
+Unmapped ports read `FFh`. Every port access costs about 1 µs of virtual
+time (ISA wait states), so the classic "read port 388h N times" delays used
+by AdLib code take the intended time.
 
 The classic retrace wait works exactly as on hardware:
 
@@ -195,9 +199,10 @@ simple instruction, more for multiply/divide/string iterations). The PIT,
 the CRT (70 Hz frames, vertical retrace in the last 8% of each frame,
 horizontal blanking in the last 20% of each of 449 lines) and keyboard
 repeat all run from that counter, so headless runs and GIF recordings are
-deterministic. The window front end throttles the counter to real time at
-the configured `-speed`; `hlt` skips ahead to the next timer or retrace
-event.
+deterministic. Audio is rendered from the same counter (48 000 samples per
+virtual second), so `-wav` output is deterministic too. The window front end
+throttles the counter to real time at the configured `-speed`; `hlt` skips
+ahead to the next timer, retrace or OPL2 timer event.
 
 ## Testing
 
