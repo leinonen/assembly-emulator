@@ -239,6 +239,9 @@ func parseNumber(txt string) (int64, error) {
 	base := 10
 	digits := lower
 	switch {
+	// A hex suffix wins over the 0b/0d prefixes, as in NASM: 0B6h is hex.
+	case len(lower) > 1 && (strings.HasSuffix(lower, "h") || strings.HasSuffix(lower, "x")) && !strings.HasPrefix(lower, "0x") && !strings.HasPrefix(lower, "0h"):
+		base, digits = 16, lower[:len(lower)-1]
 	case strings.HasPrefix(lower, "0x"):
 		base, digits = 16, lower[2:]
 	case strings.HasPrefix(lower, "$"):

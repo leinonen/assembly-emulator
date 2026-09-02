@@ -219,3 +219,13 @@ func TestForwardReferenceRelaxation(t *testing.T) {
 		t.Errorf("forward equ: %s", hexs(got))
 	}
 }
+
+func TestNumberRadixSuffixWins(t *testing.T) {
+	// A trailing h makes the number hex even when it starts with 0b or 0d,
+	// as in NASM: 0B6h is B6h, while 0b110 is still binary.
+	got := asm(t, "mov al, 0B6h\ndb 0b110\ndb 0D0h")
+	want := []byte{0xB0, 0xB6, 0x06, 0xD0}
+	if string(got) != string(want) {
+		t.Fatalf("got % X want % X", got, want)
+	}
+}
