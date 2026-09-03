@@ -12,12 +12,12 @@ number, run it again: that loop is how assembly is learned.
 
 | | |
 |---|---|
-| **[Part 1 — The basics](01-basics.md)** | hello world and the shape of a `.COM` · registers, flags and loops · memory, the stack and procedures · the keyboard · macros and the preprocessor |
-| **[Part 2 — Pixels](02-pixels.md)** | mode 13h and your first pixel · the palette · the frame loop: back buffer and vsync · lookup tables and the sine table · fixed-point maths |
-| **[Part 3 — Effects](03-effects.md)** | plasma · fire · copper bars · starfield · a sine scroller |
-| **[Part 4 — Sound](04-sound.md)** | the PC speaker · AdLib (OPL2) FM |
-| **[Part 5 — Making a demo](05-demo.md)** | structure and a timeline · going faster · size coding |
-| **[Debugging and reference](06-reference.md)** | what to try when it misbehaves · the mistakes everyone makes · a cheat sheet |
+| **[Part 1 — The basics](01-basics.md)** | [1. Hello, DOS](01-basics.md#1-hello-dos) · [2. Registers, flags and loops](01-basics.md#2-registers-flags-and-loops) · [3. Memory, the stack and procedures](01-basics.md#3-memory-the-stack-and-procedures) · [4. Reading the keyboard](01-basics.md#4-reading-the-keyboard) · [5. Macros and the preprocessor](01-basics.md#5-macros-and-the-preprocessor) |
+| **[Part 2 — Pixels](02-pixels.md)** | [6. Mode 13h and your first pixel](02-pixels.md#6-mode-13h-and-your-first-pixel) · [7. The palette](02-pixels.md#7-the-palette) · [8. The frame loop: back buffer and vsync](02-pixels.md#8-the-frame-loop-back-buffer-and-vsync) · [9. Lookup tables and the sine table](02-pixels.md#9-lookup-tables-and-the-sine-table) · [10. Fixed-point maths](02-pixels.md#10-fixed-point-maths) |
+| **[Part 3 — Effects](03-effects.md)** | [11. Plasma](03-effects.md#11-plasma) · [12. Fire](03-effects.md#12-fire) · [13. Copper bars](03-effects.md#13-copper-bars) · [14. Starfield](03-effects.md#14-starfield) · [15. A sine scroller](03-effects.md#15-a-sine-scroller) |
+| **[Part 4 — Sound](04-sound.md)** | [16. The PC speaker](04-sound.md#16-the-pc-speaker) · [17. AdLib (OPL2) FM](04-sound.md#17-adlib-opl2-fm) |
+| **[Part 5 — Making a demo](05-demo.md)** | [18. Structure and a timeline](05-demo.md#18-structure-and-a-timeline) · [19. Going faster](05-demo.md#19-going-faster) · [20. Size coding](05-demo.md#20-size-coding) |
+| **[Debugging and reference](06-reference.md)** | [Debugging](06-reference.md#debugging) · [Cheat sheet](06-reference.md#cheat-sheet) |
 
 ## Getting set up
 
