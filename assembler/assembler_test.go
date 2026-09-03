@@ -229,3 +229,14 @@ func TestNumberRadixSuffixWins(t *testing.T) {
 		t.Fatalf("got % X want % X", got, want)
 	}
 }
+
+func TestMacroLocalLabelScope(t *testing.T) {
+	// A %%label inside a macro must not become the parent of the local
+	// labels around the expansion, as in NASM.
+	src := "%macro clamp 0\n cmp al, 63\n jbe %%ok\n mov al, 63\n%%ok:\n%endmacro\n" +
+		"top:\n.loop:\n clamp\n dec cl\n jnz .loop\n"
+	got := asm(t, src)
+	if hexs(got) != "3C 3F 76 02 B0 3F FE C9 75 F6" {
+		t.Errorf("macro-local label changed the local scope: %s", hexs(got))
+	}
+}

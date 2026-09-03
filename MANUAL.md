@@ -9,6 +9,9 @@
 7. [Timing](#timing)
 8. [Testing](#testing)
 
+For a step-by-step introduction rather than a reference, see
+[docs/tutorial](docs/tutorial).
+
 ## Assembler
 
 `asm-emu asm file.asm [-o out.com] [-l out.lst]` assembles NASM syntax to a

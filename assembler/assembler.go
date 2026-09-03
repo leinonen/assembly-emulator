@@ -329,10 +329,12 @@ func (as *Assembler) runPass() error {
 		it.addr = as.curAddr
 		if it.label != "" && it.kind != itEqu {
 			as.define(it.label, it.addr, it.sect, it.line)
-			if !strings.Contains(it.label, ".") || strings.HasPrefix(it.label, "..@") {
-				as.lastLabel = it.label
-			} else if !strings.HasPrefix(it.label, as.lastLabel+".") {
-				as.lastLabel = it.label
+			// Macro-local labels (..@n.name) never become the parent of
+			// the local labels around them, as in NASM.
+			if !strings.HasPrefix(it.label, "..@") {
+				if !strings.Contains(it.label, ".") || !strings.HasPrefix(it.label, as.lastLabel+".") {
+					as.lastLabel = it.label
+				}
 			}
 		}
 		n, err := as.sizeItem(it)
