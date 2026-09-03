@@ -85,6 +85,11 @@ org 100h
     int 21h
 ```
 
+New to assembly? [docs/TUTORIAL.md](docs/TUTORIAL.md) is a guide that starts
+at "hello world" and ends with plasma, fire, copper bars, a starfield, a
+sine scroller, AdLib music and a small demo with a timeline — every listing
+is a complete program you can run.
+
 See [MANUAL.md](MANUAL.md) for the assembler reference, the supported
 instruction set, BIOS/DOS services and I/O ports.
 
