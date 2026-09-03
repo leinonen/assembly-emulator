@@ -2,6 +2,7 @@ package tests
 
 import (
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -10,14 +11,22 @@ import (
 )
 
 // TestTutorial assembles and runs every complete program listed in
-// docs/TUTORIAL.md, so the guide cannot drift away from the emulator.
+// docs/tutorial, so the guide cannot drift away from the emulator.
 func TestTutorial(t *testing.T) {
-	md, err := os.ReadFile("../docs/TUTORIAL.md")
-	if err != nil {
+	pages, _ := filepath.Glob("../docs/tutorial/*.md")
+	if len(pages) == 0 {
 		t.Skip("no tutorial")
 	}
-	blocks := regexp.MustCompile("(?s)```nasm\n(.*?)```").FindAllStringSubmatch(string(md), -1)
+	fence := regexp.MustCompile("(?s)```nasm\n(.*?)```")
 	name := regexp.MustCompile(`^; (\S+\.asm)`)
+	var blocks [][]string
+	for _, p := range pages {
+		md, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		blocks = append(blocks, fence.FindAllStringSubmatch(string(md), -1)...)
+	}
 	found := 0
 	for _, b := range blocks {
 		src := b[1]

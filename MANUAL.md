@@ -10,7 +10,7 @@
 8. [Testing](#testing)
 
 For a step-by-step introduction rather than a reference, see
-[docs/TUTORIAL.md](docs/TUTORIAL.md).
+[docs/tutorial](docs/tutorial).
 
 ## Assembler
 
