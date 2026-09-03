@@ -195,6 +195,57 @@ The classic retrace wait works exactly as on hardware:
     jz .w2           ; wait for the retrace to begin
 ```
 
+## Debugger
+
+`asm-emu run -debug <file>` attaches an interactive debugger that stops at
+the program's first instruction. Commands are read from standard input and
+answered on standard output, so it works headless and with the window (the
+program runs in the window while the terminal takes commands). Program
+console output is interleaved with the debugger's.
+
+Assembling a `.asm` file gives the debugger the listing and symbol table:
+labels and EQU constants can be used wherever a number is expected, local
+labels (`.loop`) resolve inside the routine containing CS:IP, breakpoints can
+name a source line, and each stop prints the source line with the
+instruction. Running a `.COM` binary gives addresses only.
+
+| Command | Meaning |
+|---------|---------|
+| `?` | help |
+| `r` | show registers, flags and the current instruction |
+| `r reg=val` | set a register: 8/16/32-bit general registers, segment registers, `ip`, `fl`, or a flag bit (`r cf=1`) |
+| `r32` | toggle the 32-bit register view (shown automatically when a high half is non-zero) |
+| `s [n]` | step n instructions, following calls and interrupts. Hardware interrupts (timer, keyboard) delivered while stepping are run to completion so the step lands on the next instruction of the program, not in the handler |
+| `n [n]` | step over: a `call`, `int`, `loop`/`loope`/`loopne` or `rep` string instruction runs to the following instruction (with the stack back at its level); other instructions single-step |
+| `g [addr]` | run until a breakpoint, the program exits, or `addr` is reached. Ctrl-C in the terminal pauses a running program |
+| `b addr` | set a breakpoint (`b` alone lists them); `bl` lists, `bc n` clears one, `bc *` clears all |
+| `u [addr] [n]` | disassemble n instructions (default 16) in NASM syntax; `u` alone continues; labels and branch targets are annotated |
+| `d [addr] [len]` | hex dump (default 128 bytes from DS); `d` alone continues; video memory is read without disturbing the VGA latches |
+| `e addr b...` | write bytes at addr (`e msg 'Hi' 24h`); the default segment is DS |
+| `k [n]` | show n words of stack from SS:SP, annotated with the nearest label |
+| `f` | show the x87 stack (ST0-ST7 with tags), control and status words |
+| `l [addr\|line]` | list ten source lines around addr (or line n of the main file, or the current instruction); `l` alone continues |
+| `= expr` | evaluate an expression (`= msg`, `= 'A'+1`, `= es:di` shows the linear address) |
+| `q` | quit the emulator |
+
+Numbers are hexadecimal by default (`100`, `0x100` and `100h` are equal);
+`'c'` is a character; counts (`s 5`, `u start 20`) are decimal. Terms may be
+registers, labels, or constants joined with `+` and `-`. An address is
+`off` (in CS for code commands, DS for data commands), `seg:off` with either
+part being any term (`es:di`, `a000:0`), a label, or `file.asm:line`
+(`:line` alone means the main file; a line without code resolves to the next
+one that has some). An empty line repeats the previous command.
+
+When the program exits, faults, or hits `-max-insns`, the debugger reports
+why and stays at the prompt so the final registers and memory can be
+inspected; execution commands then report that the program is no longer
+running. Breakpoints are compared on linear addresses, so a breakpoint set as
+`b 105` while CS=0800 also triggers as `0800:0105`.
+
+The `disasm` package that renders instructions is also usable on its own:
+`disasm.Decode` returns the NASM text, length and branch hints for the
+instruction at any address.
+
 ## Timing
 
 Every instruction advances a virtual cycle counter (roughly 2-4 cycles per

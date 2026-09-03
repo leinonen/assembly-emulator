@@ -49,6 +49,13 @@ type Machine struct {
 	// retrace (front ends set this; headless runs skip the cost).
 	RenderFrames bool
 
+	// StepHook, if set, is called by the run loop before every
+	// instruction (or idle tick while halted). Returning false stops the
+	// run and marks it as quit by the hook (see QuitRequested). A
+	// debugger uses it to break, single-step and pause.
+	StepHook func() bool
+	quit     bool
+
 	// Frame snapshot taken at every vertical retrace (for renderers).
 	frameMu sync.Mutex
 	frame   emio.Frame
@@ -252,6 +259,11 @@ func (m *Machine) idle() error {
 func (m *Machine) RunCycles(n uint64) error {
 	target := m.CPU.Cycles + n
 	for m.CPU.Cycles < target && !m.CPU.Stopped() {
+		if m.StepHook != nil && !m.StepHook() {
+			m.quit = true
+			m.CPU.Stop()
+			return nil
+		}
 		if err := m.Step(); err != nil {
 			return err
 		}
@@ -290,6 +302,26 @@ func (m *Machine) Run() error {
 
 // Stop halts execution.
 func (m *Machine) Stop() { m.CPU.Stop() }
+
+// QuitRequested reports that the step hook ended the run (a debugger
+// quit): front ends should close rather than keep the last frame up.
+func (m *Machine) QuitRequested() bool { return m.quit }
+
+// Peek8 reads a byte of physical memory without side effects: video
+// memory is read through the VGA without touching its latches.
+func (m *Machine) Peek8(addr uint32) byte {
+	if !m.Mem.A20 {
+		addr &= 0xFFFFF
+	}
+	addr &= 0x1FFFFF
+	if addr >= emulator.VGAMemStart && addr < emulator.VGAMemStart+0x20000 {
+		return m.VGA.Peek(addr)
+	}
+	if addr >= uint32(len(m.Mem.RAM)) {
+		addr %= uint32(len(m.Mem.RAM))
+	}
+	return m.Mem.RAM[addr]
+}
 
 // KeyDown / KeyUp inject scancode-set-1 keys from a host front end.
 func (m *Machine) KeyDown(code uint8, ext bool) { m.KBD.KeyDown(code, ext) }

@@ -104,6 +104,9 @@ type CPU struct {
 	// LastVector is the interrupt/exception vector taken during the last
 	// Step, or -1.
 	LastVector int
+	// LastIRQ reports that the last Step delivered a hardware interrupt
+	// (debuggers use it to step over interrupt handlers transparently).
+	LastIRQ bool
 
 	// intInhibit is set after MOV SS / POP SS / STI so the following
 	// instruction executes before any interrupt is delivered.
@@ -451,6 +454,7 @@ func (c *CPU) ClearStop()    { c.stopped = false }
 // unless interrupted by a pending IRQ) and then delivers a pending
 // hardware interrupt if IF permits.
 func (c *CPU) Step() error {
+	c.LastIRQ = false
 	if c.Halted {
 		// Halted: only an interrupt can resume us.
 		if c.Flags&FlagIF != 0 && c.PendingIRQ != nil {
@@ -460,6 +464,7 @@ func (c *CPU) Step() error {
 					c.AckIRQ(v)
 				}
 				c.Interrupt(uint8(v))
+				c.LastIRQ = true
 				return nil
 			}
 		}
@@ -500,6 +505,7 @@ func (c *CPU) Step() error {
 				c.AckIRQ(v)
 			}
 			c.Interrupt(uint8(v))
+			c.LastIRQ = true
 		}
 	}
 	return nil

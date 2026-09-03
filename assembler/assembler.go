@@ -15,6 +15,9 @@ type Options struct {
 	IncludeDirs []string
 	// Listing, if non-nil, receives "address bytes source" lines.
 	Listing func(addr int64, code []byte, file string, line int)
+	// Symbol, if non-nil, receives every label (label=true) and EQU
+	// constant defined by a successful assembly.
+	Symbol func(name string, value int64, label bool)
 }
 
 // Assemble assembles NASM-syntax source into a flat binary.
@@ -288,6 +291,19 @@ func (as *Assembler) assemble() ([]byte, error) {
 				continue
 			}
 			as.opts.Listing(it.addr, it.bytes, it.line.file, it.line.line)
+		}
+	}
+	if as.opts.Symbol != nil {
+		names := make([]string, 0, len(as.symbols))
+		for name, s := range as.symbols {
+			if s.defined {
+				names = append(names, name)
+			}
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			s := as.symbols[name]
+			as.opts.Symbol(name, s.value, !s.isEqu)
 		}
 	}
 	// Layout: progbits sections in order, then nobits (not emitted).

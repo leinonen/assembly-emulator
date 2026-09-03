@@ -7,12 +7,20 @@ import (
 	"strings"
 
 	"assembly-emulator/assembler"
+	"assembly-emulator/debugger"
 	"assembly-emulator/graphics"
 	"assembly-emulator/machine"
 )
 
-func assembleSource(path string, src []byte) ([]byte, error) {
-	return assembler.Assemble(src, assembler.Options{Filename: path, IncludeDirs: []string{filepath.Dir(path)}})
+// assembleSource assembles a NASM source; when info is non-nil it is
+// filled with the listing and symbols for the debugger.
+func assembleSource(path string, src []byte, info *debugger.Source) ([]byte, error) {
+	opts := assembler.Options{Filename: path, IncludeDirs: []string{filepath.Dir(path)}}
+	if info != nil {
+		opts.Listing = info.AddListing
+		opts.Symbol = info.AddSymbol
+	}
+	return assembler.Assemble(src, opts)
 }
 
 func asmCmd(args []string) int {

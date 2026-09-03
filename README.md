@@ -54,6 +54,7 @@ Useful `run` flags:
 | `-gif out.gif -gif-frames 150` | record the display to an animated GIF (deterministic, no window) |
 | `-wav out.wav` | write the audio output (mono 16-bit 48 kHz) to a WAV file; works headless and with `-gif` |
 | `-stats` | print instruction/cycle counts and the final CS:IP |
+| `-debug` | start in the interactive debugger: step through the program and inspect registers and memory (see below) |
 
 In the window, **F12** quits; all other keys are delivered to the program as
 PC scancodes (ESC included). Programs that `int 21h`/`4Ch` keep their final
@@ -61,6 +62,51 @@ frame on screen until a key is pressed.
 
 Files opened by the program are resolved inside the directory containing the
 program (drive letters are ignored, `..` is refused).
+
+## Debugging
+
+`asm-emu run -debug program.asm` stops at the first instruction and reads
+commands from the terminal (with or without `-headless`; in the window the
+program runs while you type in the terminal). Running a `.asm` file gives the
+debugger the source lines and labels, so breakpoints can be set by label or
+by `file.asm:line` and every stop shows the source line.
+
+```
+$ asm-emu run -headless -debug examples/plasma.asm
+asm-emu debugger: plasma.asm loaded at 0800:0100. Type ? for help.
+AX=0000  BX=0000  CX=0000  DX=0000  SP=FFFE  BP=0000  SI=0000  DI=0000
+DS=0800  ES=0800  SS=0800  CS=0800  IP=0100   NV UP EI PL NZ NA PO NC
+plasma.asm:30: mov ax, 0x13
+start:
+0800:0100 B81300           mov ax,0x13
+dbg> b x_loop
+breakpoint 1 at 0800:0194 (x_loop)
+dbg> g
+breakpoint 1 hit
+AX=0000  BX=01EF  CX=0140  DX=7F00  SP=FFFA  BP=0000  SI=02EF  DI=0000
+DS=0800  ES=7000  SS=0800  CS=0800  IP=0194   NV UP EI PL ZR NA PE NC
+plasma.asm:124: lodsb                   ; wave 1 for this X
+x_loop:
+0800:0194 AC               lodsb
+dbg> n
+```
+
+| Command | Meaning |
+|---------|---------|
+| `s [n]` | step n instructions (into calls; hardware interrupts are stepped over) |
+| `n [n]` | step over `call`, `int`, `loop` and `rep` string instructions |
+| `g [addr]` | run until a breakpoint, program exit, or `addr`; Ctrl-C pauses |
+| `b addr`, `bl`, `bc n` | set, list, clear breakpoints |
+| `r [reg=val]` | show registers, or set one (`r ax=1234`, `r zf=1`, `r ip=200`) |
+| `u [addr] [n]`, `d [addr] [len]`, `e addr bytes...` | disassemble, dump, edit memory |
+| `k [n]`, `f`, `l [addr]`, `= expr` | stack words, x87 stack, source listing, evaluate |
+| `q` | quit |
+
+Numbers are hexadecimal (`0x100`, `100h` and `100` are the same); counts are
+decimal. An address is `off`, `seg:off`, a label, a register pair such as
+`es:di`, or `file.asm:line`; `+` and `-` combine terms (`d ds:si+2`). An
+empty line repeats the last command. The full command list is in
+[MANUAL.md](MANUAL.md#debugger).
 
 ## Writing programs
 

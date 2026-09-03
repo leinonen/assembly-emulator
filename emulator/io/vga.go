@@ -369,6 +369,15 @@ func (v *VGA) Read(addr uint32) byte {
 	return v.latch[v.GC[4]&3]
 }
 
+// Peek returns what Read would return without disturbing the latches
+// (for debuggers inspecting video memory).
+func (v *VGA) Peek(addr uint32) byte {
+	saved := v.latch
+	b := v.Read(addr)
+	v.latch = saved
+	return b
+}
+
 func (v *VGA) Write(addr uint32, val byte) {
 	off := v.windowOffset(addr)
 	if off < 0 {

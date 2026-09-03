@@ -61,6 +61,9 @@ func (g *game) Update() error {
 	g.mu.Lock()
 	finished := g.finished
 	g.mu.Unlock()
+	if finished && g.m.QuitRequested() {
+		return ebiten.Termination
+	}
 	if finished && g.m.Exited() {
 		// Keep the final frame visible until the window is closed or a
 		// key is pressed.

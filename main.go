@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"assembly-emulator/debugger"
 	"assembly-emulator/machine"
 )
 
@@ -50,6 +51,7 @@ func runCmd(args []string) int {
 	trace := fs.Bool("stats", false, "print execution statistics on exit")
 	shot := fs.String("screenshot", "", "write the final screen to this PNG file")
 	wav := fs.String("wav", "", "write the audio output to this WAV file (mono 16-bit 48 kHz)")
+	debug := fs.Bool("debug", false, "start in the interactive debugger (commands on stdin; ? for help)")
 	fs.Usage = usage
 	fs.Parse(args)
 	if fs.NArg() < 1 {
@@ -74,7 +76,7 @@ func runCmd(args []string) int {
 		opts.CPUHz = uint64(mhz * 1e6)
 	}
 
-	image, err := loadProgram(path)
+	image, src, err := loadProgram(path, *debug)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
@@ -83,6 +85,14 @@ func runCmd(args []string) int {
 	if err := m.LoadCOM(image, tail); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
+	}
+
+	var dbg *debugger.Debugger
+	if *debug {
+		dbg = debugger.New(m, src, os.Stdin, os.Stdout)
+		m.Opts.Stdout = dbg.Output()
+		dbg.Attach()
+		dbg.HandleInterrupt()
 	}
 
 	var wavOut *wavSink
@@ -101,7 +111,9 @@ func runCmd(args []string) int {
 	default:
 		runErr = runWindow(m, filepath.Base(path))
 	}
-	if runErr != nil {
+	if dbg != nil {
+		dbg.Finish(runErr)
+	} else if runErr != nil {
 		fmt.Fprintln(os.Stderr, "error:", runErr)
 	}
 	if wavOut != nil {
@@ -128,14 +140,21 @@ func runCmd(args []string) int {
 
 var startTime = time.Now()
 
-// loadProgram returns the .COM image for a path, assembling sources.
-func loadProgram(path string) ([]byte, error) {
+// loadProgram returns the .COM image for a path, assembling sources. With
+// debug set, assembling also collects source lines and symbols for the
+// debugger (nil for binaries).
+func loadProgram(path string, debug bool) ([]byte, *debugger.Source, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if strings.EqualFold(filepath.Ext(path), ".asm") {
-		return assembleSource(path, data)
+		var src *debugger.Source
+		if debug {
+			src = debugger.NewSource(path)
+		}
+		image, err := assembleSource(path, data, src)
+		return image, src, err
 	}
-	return data, nil
+	return data, nil, nil
 }

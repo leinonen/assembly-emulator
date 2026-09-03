@@ -23,6 +23,10 @@ NASM sources run unchanged.
 - `loader/` .COM loader. `machine/` wires everything, virtual-clock throttle.
 - `assembler/` NASM-compatible assembler (lexer, preprocessor, expr, parser,
   operand, table, encoder, only-grow relaxation).
+- `disasm/` NASM-syntax disassembler (386 integer set + x87) used by the
+  debugger; `debugger/` interactive debugger driven by `Machine.StepHook`
+  (breakpoints, step/step-over with hardware IRQs hidden, register/memory
+  inspection, source lines from the assembler's listing and symbols).
 - `graphics/` Ebiten window, scancode keymap, GIF recorder, and `audio.go`
   (the only Ebiten-audio import; feeds the mixer to a player). `cp437/`,
   `font/`.
